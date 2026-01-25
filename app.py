@@ -26,6 +26,11 @@ import math
 # Importar configurações do módulo config
 import config
 
+# Filtrar warnings de forma abrangente para reduzir poluição no terminal
+warnings.filterwarnings("ignore", category=Warning, module="transformers")
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 # Filtrar warnings específicos da biblioteca kokoro
 warnings.filterwarnings("ignore", 
                        message=".*dropout option adds dropout after all but last recurrent layer.*")
@@ -36,6 +41,12 @@ warnings.filterwarnings("ignore",
 warnings.filterwarnings("ignore", 
                        category=FutureWarning,
                        module="torch.nn.utils.weight_norm")
+
+# Filtrar warnings específicos do Qwen3-TTS e Transformers
+warnings.filterwarnings("ignore", 
+                       message=".*Setting `pad_token_id` to `eos_token_id`.*")
+warnings.filterwarnings("ignore",
+                       message=".*`max_length` is set.*")
 
 # Inicializar colorama para cores no terminal
 init(autoreset=True)
@@ -555,10 +566,47 @@ class ChicaAssistant:
             try:
                 # Tentar importar o Qwen3-TTS
                 from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
-                self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL)
-                print(Fore.GREEN + f"✅ Sistema TTS Qwen3 inicializado com sucesso")
+                # Determinar dispositivo ideal para TTS
+                tts_device = "mps" if torch.backends.mps.is_available() else "cpu"
+                print(f"Dispositivo TTS: {tts_device}")
+                # Carregar modelo diretamente no dispositivo MPS (se disponível) para melhor performance
+                if tts_device == "mps":
+                    self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL, device_map="mps")
+                else:
+                    self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL)
+                # Verificar dispositivo real do modelo
+                if hasattr(self.qwen3_pipeline.model, 'device'):
+                    actual_device = self.qwen3_pipeline.model.device
+                else:
+                    actual_device = next(self.qwen3_pipeline.model.parameters()).device
+                print(Fore.GREEN + f"✅ Sistema TTS Qwen3 inicializado com sucesso (dispositivo: {actual_device})")
                 print(Fore.GREEN + f"   • Voz: {QWEN3_VOICE}")
                 print(Fore.GREEN + f"   • Idioma: {QWEN3_LANGUAGE}")
+                
+                # Aplicar torch.compile para otimização de desempenho (se configurado)
+                if config.QWEN3_USE_COMPILE and hasattr(torch, 'compile'):
+                    try:
+                        print(Fore.YELLOW + "   • Compilando modelo com torch.compile...")
+                        compiled_model = torch.compile(self.qwen3_pipeline.model, mode="reduce-overhead")
+                        self.qwen3_pipeline.model = compiled_model
+                        print(Fore.GREEN + "   • Modelo compilado com sucesso")
+                    except Exception as compile_e:
+                        print(Fore.YELLOW + f"   • Aviso na compilação: {compile_e}")
+                
+                # Pré-aquecimento do modelo (compila kernels MPS e reduz latência na primeira inferência)
+                try:
+                    print(Fore.YELLOW + "   • Pré-aquentendo modelo Qwen3-TTS...")
+                    _ = self.qwen3_pipeline.generate_custom_voice(
+                        text="Olá",
+                        speaker=QWEN3_VOICE,
+                        language=QWEN3_LANGUAGE,
+                        non_streaming_mode=True
+                    )
+                    self.qwen3_warmed_up = True
+                    print(Fore.GREEN + "   • Modelo pré-aquecido com sucesso")
+                except Exception as warmup_e:
+                    print(Fore.YELLOW + f"   • Aviso no pré-aquecimento: {warmup_e}")
+                    # Continuar mesmo com erro no pré-aquecimento
             except ImportError as e:
                 print(Fore.RED + f"❌ Erro: Qwen3-TTS não está instalado")
                 print(Fore.YELLOW + f"⚠️  Instale com: pip install qwen-tts")
@@ -574,7 +622,37 @@ class ChicaAssistant:
                 # Tentar continuar mesmo com o aviso
                 try:
                     from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
-                    self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL)
+                    tts_device = "mps" if torch.backends.mps.is_available() else "cpu"
+                    # Carregar modelo diretamente no dispositivo MPS (se disponível) para melhor performance
+                    if tts_device == "mps":
+                        self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL, device_map="mps")
+                    else:
+                        self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL)
+                    
+                    # Aplicar torch.compile para otimização de desempenho (se configurado)
+                    if config.QWEN3_USE_COMPILE and hasattr(torch, 'compile'):
+                        try:
+                            print(Fore.YELLOW + "   • Compilando modelo com torch.compile...")
+                            compiled_model = torch.compile(self.qwen3_pipeline.model, mode="reduce-overhead")
+                            self.qwen3_pipeline.model = compiled_model
+                            print(Fore.GREEN + "   • Modelo compilado com sucesso")
+                        except Exception as compile_e:
+                            print(Fore.YELLOW + f"   • Aviso na compilação: {compile_e}")
+                    
+                    # Pré-aquecimento do modelo (compila kernels MPS e reduz latência na primeira inferência)
+                    try:
+                        print(Fore.YELLOW + "   • Pré-aquentendo modelo Qwen3-TTS...")
+                        _ = self.qwen3_pipeline.generate_custom_voice(
+                            text="Olá",
+                            speaker=QWEN3_VOICE,
+                            language=QWEN3_LANGUAGE,
+                            non_streaming_mode=True
+                        )
+                        self.qwen3_warmed_up = True
+                        print(Fore.GREEN + "   • Modelo pré-aquecido com sucesso")
+                    except Exception as warmup_e:
+                        print(Fore.YELLOW + f"   • Aviso no pré-aquecimento: {warmup_e}")
+                        # Continuar mesmo com erro no pré-aquecimento
                 except:
                     print(Fore.RED + f"❌ Não foi possível inicializar Qwen3-TTS")
                     print(Fore.YELLOW + f"⚠️  Usando Kokoro-TTS como fallback...")
@@ -621,6 +699,11 @@ class ChicaAssistant:
         self.interruption_buffer = []
         self.interruption_enabled = True  # Permite interromper a IA
         self.stop_phrases = ["calado", "calada", "silêncio", "silencio"]  # Apenas comandos explícitos de interrupção
+        
+        # Cache para frases curtas frequentes (melhora performance do Qwen3-TTS)
+        self.tts_cache = {}
+        self.max_cache_size = 50  # Limite máximo de frases em cache
+        self.qwen3_warmed_up = False  # Flag para controle de pré-aquecimento
         
         # Configurar handler para CTRL+C
         signal.signal(signal.SIGINT, self.signal_handler)
@@ -1396,19 +1479,38 @@ class ChicaAssistant:
                     if self.qwen3_pipeline:
                         # Gerar áudio com Qwen3-TTS
                         try:
-                            result = self.qwen3_pipeline.generate_custom_voice(
-                                text=sentence,
-                                speaker=QWEN3_VOICE,
-                                language=QWEN3_LANGUAGE,
-                                non_streaming_mode=True
-                            )
-                            
-                            if result and len(result) > 0:
-                                # O resultado é uma tupla (audio_list, sample_rate)
-                                audio_list, sample_rate = result
-                                if audio_list and len(audio_list) > 0:
-                                    audio = audio_list[0]  # Pegar o primeiro áudio
-                                    audio_chunks.append(audio)
+                            # Verificar cache para frases curtas (melhora performance)
+                            cache_key = f"{sentence}_{QWEN3_VOICE}_{QWEN3_LANGUAGE}"
+                            if len(sentence) < 100 and cache_key in self.tts_cache:
+                                # Usar áudio do cache
+                                audio = self.tts_cache[cache_key]
+                                audio_chunks.append(audio)
+                                print(Fore.CYAN + f"   • Cache hit: '{sentence[:50]}...'")
+                            else:
+                                # Gerar novo áudio
+                                result = self.qwen3_pipeline.generate_custom_voice(
+                                    text=sentence,
+                                    speaker=QWEN3_VOICE,
+                                    language=QWEN3_LANGUAGE,
+                                    non_streaming_mode=True
+                                )
+                                
+                                if result and len(result) > 0:
+                                    # O resultado é uma tupla (audio_list, sample_rate)
+                                    audio_list, sample_rate = result
+                                    if audio_list and len(audio_list) > 0:
+                                        audio = audio_list[0]  # Pegar o primeiro áudio
+                                        audio_chunks.append(audio)
+                                        
+                                        # Armazenar no cache para frases curtas
+                                        if len(sentence) < 100:
+                                            # Limpar cache se estiver muito grande
+                                            if len(self.tts_cache) >= self.max_cache_size:
+                                                # Remover item mais antigo (simples)
+                                                first_key = next(iter(self.tts_cache))
+                                                del self.tts_cache[first_key]
+                                            self.tts_cache[cache_key] = audio
+                                            print(Fore.CYAN + f"   • Cache stored: '{sentence[:50]}...'")
                         except Exception as e:
                             print(Fore.YELLOW + f"⚠️  Erro ao gerar áudio com Qwen3-TTS: {e}")
                             # Tentar fallback para Kokoro-TTS se disponível

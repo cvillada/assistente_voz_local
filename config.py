@@ -121,6 +121,7 @@ TTS_SYSTEM = 'kokoro'
 QWEN3_MODEL = 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice'  # Modelo Qwen3-TTS
 QWEN3_VOICE = 'serena'  # Voz para português (serena)
 QWEN3_LANGUAGE = 'portuguese'  # Idioma para síntese (em inglês: 'portuguese')
+QWEN3_USE_COMPILE = False  # torch.compile piora desempenho no MPS (testes mostraram 10x mais lento)
 
 # ============================================================================
 # CONFIGURAÇÕES DO MODELO OLLAMA
