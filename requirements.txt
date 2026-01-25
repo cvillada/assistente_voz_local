@@ -1,0 +1,52 @@
+# Requirements para o Assistente de Voz Chica com Avatar (app4.py)
+# Instale com: pip install -r requirements.txt
+
+# Modelos de IA
+ollama>=0.3.0              # Para LLM local (Ollama)
+openai-whisper>=20231117   # Para reconhecimento de voz (STT)
+kokoro>=0.1.0              # Para síntese de voz (TTS)
+qwen3-tts>=0.1.0           # Para síntese de voz (TTS) com Qwen3
+
+# Framework de deep learning
+torch>=2.0.0               # PyTorch (necessário para Whisper e Kokoro)
+sox>=1.4.1                 # Para processamento de áudio
+
+# Processamento de áudio
+soundfile>=0.12.0          # Para leitura/escrita de arquivos de áudio
+sounddevice>=0.4.6         # Para captura e reprodução de áudio em tempo real
+numpy>=2.0.0               # Para processamento numérico de áudio
+
+# Interface gráfica (Avatar)
+pygame>=2.6.0              # Para exibição do avatar animado
+
+# Utilitários
+colorama>=0.4.6            # Para cores no terminal
+tqdm>=4.66.0               # Para barras de progresso (usado pelo Whisper)
+
+# Dependências opcionais/recomendadas
+# Para melhor performance com CUDA (se tiver GPU NVIDIA):
+# torch>=2.0.0 --index-url https://download.pytorch.org/whl/cu118
+
+# Para melhor performance com Apple Silicon (M1/M2/M3):
+# torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
+
+# Notas importantes:
+# 1. O Ollama deve ser instalado separadamente (veja https://ollama.ai/)
+# 2. O Whisper baixa automaticamente os modelos na primeira execução
+# 3. O Kokoro baixa automaticamente as vozes na primeira execução
+# 4. Para GPU NVIDIA, instale PyTorch com suporte CUDA
+# 5. Para Apple Silicon, use PyTorch otimizado para MPS
+# 6. O Pygame é necessário para a interface do avatar
+# 7. Certifique-se de ter as dependências do SDL2 instaladas para o Pygame
+
+# Instalação no macOS:
+# brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf portaudio
+# pip install -r requirements.txt
+
+# Instalação no Ubuntu/Debian:
+# sudo apt-get install python3-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev portaudio19-dev
+# pip install -r requirements.txt
+
+# Instalação no Windows:
+# Baixe os instaladores do Pygame e SDL2 do site oficial
+# pip install -r requirements.txt

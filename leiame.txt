@@ -1,0 +1,267 @@
+===================================================
+ASSISTENTE DE VOZ CHICA COM AVATAR - MANUAL DE INSTALAÇÃO
+===================================================
+
+📋 REQUISITOS DO SISTEMA
+===================================================
+
+1. 🐍 Python 3.8 ou superior
+2. 💾 8GB RAM mínimo (16GB recomendado)
+3. 🎤 Microfone funcionando
+4. 🔊 Alto-falantes funcionando
+5. 🌐 Conexão com internet (para baixar modelos)
+6. 🖥️ Sistema gráfico (para o avatar)
+
+⚙️ INSTALAÇÃO DAS DEPENDÊNCIAS
+===================================================
+
+1. Primeiro, instale o Python 3.8+ se ainda não tiver:
+   - Windows: https://www.python.org/downloads/
+   - macOS: `brew install python`
+   - Linux: `sudo apt install python3 python3-pip`
+
+2. Crie um ambiente virtual (recomendado):
+   ```bash
+   python -m venv venv
+   
+   # Windows
+   venv\Scripts\activate
+   
+   # macOS/Linux
+   source venv/bin/activate
+   ```
+
+3. Instale as dependências Python:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Instale dependências do sistema para o Pygame (avatar):
+   
+   **macOS:**
+   ```bash
+   brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf portaudio
+   ```
+   
+   **Ubuntu/Debian:**
+   ```bash
+   sudo apt-get install python3-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev portaudio19-dev
+   ```
+   
+   **Windows:**
+   - Baixe os instaladores do Pygame e SDL2 do site oficial
+
+🔧 INSTALAÇÃO DO OLLAMA (OBRIGATÓRIO)
+===================================================
+
+O Ollama é necessário para o modelo de linguagem local.
+
+1. 📥 Baixe e instale o Ollama:
+   - Site oficial: https://ollama.ai/
+   - Ou use os comandos abaixo:
+
+   ```bash
+   # macOS
+   curl -fsSL https://ollama.ai/install.sh | sh
+   
+   # Linux
+   curl -fsSL https://ollama.ai/install.sh | sh
+   
+   # Windows (PowerShell como administrador)
+   winget install Ollama.Ollama
+   ```
+
+2. 🚀 Inicie o serviço Ollama:
+   ```bash
+   # Em um terminal separado
+   ollama serve
+   ```
+
+3. 📦 Baixe um modelo (recomendado):
+   ```bash
+   # Modelo em português recomendado
+   ollama pull llama3.2:3b
+   
+   # Ou modelos alternativos
+   ollama pull mistral:7b
+   ollama pull gemma:2b
+   ```
+
+🎯 CONFIGURAÇÃO DO PROGRAMA
+===================================================
+
+1. 📝 Todas as configurações estão centralizadas no arquivo `config.py`:
+
+   ```python
+   # Configurações gerais
+   ASSISTANT_NAME = "Chica"
+   ASSISTANT_GREETING = " Eu sou a Chica, sua assistente. Como posso ajudar?"
+   
+   # Configurações do avatar
+   AVATAR_ENABLE = True  # True: habilita a janela do avatar, False: desabilita o avatar completamente
+   AVATAR_WINDOW_SIZE_CM = 7  # Tamanho da janela em centímetros
+   AVATAR_IMAGE_DIR = "chica_img"  # Pasta com as imagens do avatar
+   AVATAR_BLINK_INTERVAL = 3.0  # Segundos entre piscadas
+   AVATAR_SPEAK_ANIMATION_SPEED = 0.1  # Velocidade da animação de fala
+   
+   # Configurações de áudio
+   SAMPLE_RATE = 16000
+   CHANNELS = 1
+   CHUNK = 1024
+   AUDIO_DEVICE = "Isolamento de Voz"  # Nome do dispositivo de áudio
+   
+   # Palavras de ativação
+   WAKE_WORDS = [
+       "olá chica", "ei chica", "chica", "ok chica",
+       "shika", "shica", "hei chica", "hei shica"
+   ]
+   
+   # Configurações dos modelos
+   OLLAMA_MODEL = 'llama3.2:3b'
+   WHISPER_MODEL = 'base'
+   TTS_VOICE = 'pf_dora 80% mais if_sara 20%'
+   ```
+
+2. 🎤 Teste seu microfone:
+   ```bash
+   python -c "import sounddevice as sd; print(sd.query_devices())"
+   ```
+
+3. 🖼️ Verifique as imagens do avatar:
+   - Certifique-se que a pasta `chica_img/` contém:
+     - `chica_normal.png` (estado inicial)
+     - `chica_olho.png` (piscar)
+     - `chica_boca.png` (falando)
+     - `chica_olho_boca.png` (piscar enquanto fala)
+
+🚀 EXECUTANDO O PROGRAMA
+===================================================
+
+1. Certifique-se que o Ollama está rodando:
+   ```bash
+   ollama serve
+   ```
+
+2. Execute o assistente com avatar:
+   ```bash
+   python app.py
+   ```
+
+3. Comandos de voz:
+   - "olá chica" - Para acordar a assistente
+   - "pare" ou "para" - Para interromper a fala
+   - Silêncio de 15 segundos - Volta a dormir
+
+4. Interface do avatar:
+   - Janela de 7x7cm com animações sincronizadas com a fala
+   - Piscadas naturais quando não está falando
+   - Animação de fala alternando entre boca aberta e fechada
+   - **Controle de habilitação**: Use `AVATAR_ENABLE = False` no `config.py` para desativar completamente o avatar (útil para sistemas sem interface gráfica ou para economizar recursos)
+
+🎛️ CONFIGURAÇÕES AVANÇADAS
+===================================================
+
+1. Para usar GPU (se disponível):
+   ```bash
+   # Desinstale PyTorch atual
+   pip uninstall torch
+   
+   # Instale PyTorch com CUDA (NVIDIA)
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+   
+   # Ou para Apple Silicon
+   pip install torch torchvision torchaudio
+   ```
+
+2. Configurações de voz:
+   - Voz única: `'pf_dora'`
+   - Voz mista: `'pf_dora 80% mais if_sara 20%'`
+   - Outras vozes disponíveis no Kokoro
+
+3. Configurações do processamento do thinking:
+   ```python
+   # ============================================================================
+   # CONFIGURAÇÃO DE THINKING (PROCESSAMENTO DO MODELO)
+   # ============================================================================
+
+   THINKING_ENABLED = True              # Ativa/desativa o modo thinking do modelo True ou False
+   THINKING_TIMEOUT = 30                # Timeout em segundos para processamento do thinking
+   ```
+   - `THINKING_ENABLED`: Controla se o sistema processa o campo `thinking` dos modelos
+   - `THINKING_TIMEOUT`: Tempo máximo para processar respostas complexas
+
+4. Tamanho do avatar:
+   - Modifique `AVATAR_WINDOW_SIZE_CM` no `config.py`
+   - O tamanho é automaticamente convertido para pixels
+
+� ARQUITETURA DO SISTEMA
+===================================================
+
+📁 Estrutura de arquivos:
+```
+kokoro/
+├── app.py              # Programa principal com avatar
+├── config.py            # Configurações centralizadas
+├── requirements.txt     # Dependências Python
+├── leiame.txt          # Este manual
+├── README.md           # Documentação em inglês
+└── chica_img/          # Imagens do avatar
+    ├── chica_normal.png
+    ├── chica_olho.png
+    ├── chica_boca.png
+    └── chica_olho_boca.png
+```
+
+🔄 Fluxo do sistema:
+1. Wake word detection → 2. STT (Whisper) → 3. LLM (Ollama) → 4. TTS (Kokoro) → 5. Avatar animation
+
+🎯 DICAS DE USO
+===================================================
+
+1. Fale claramente e em um ambiente silencioso
+2. Aguarde o "beep" antes de falar
+3. Use frases completas para melhores respostas
+4. O avatar ajuda a visualizar quando a assistente está falando
+5. Para interromper, diga "pare" ou "para"
+
+� MODELOS SUPORTADOS E PROCESSAMENTO DO THINKING
+===================================================
+
+O sistema suporta vários modelos do Ollama com processamento inteligente:
+
+1. **Modelos com thinking (raciocínio interno):**
+   - `qwen3:0.6b` - Usa campo `thinking` para raciocínio complexo
+   - Outros modelos que implementam o padrão thinking
+
+2. **Modelos sem thinking:**
+   - `llama3.2:3b` - Respostas diretas no campo `content`
+   - `mistral:7b` - Respostas diretas
+   - `gemma:2b` - Respostas diretas
+
+3. **Processamento inteligente do thinking:**
+   - ✅ **Extração de respostas**: Extrai a resposta final do campo `thinking`
+   - ✅ **Detecção de repetição**: Evita repetir respostas anteriores
+   - ✅ **Filtragem de raciocínio**: Remove linhas de raciocínio interno
+   - ✅ **Fallback inteligente**: Múltiplas estratégias de extração
+
+4. **Configuração do thinking:**
+   - Ative/desative com `THINKING_ENABLED` no `config.py`
+   - Ajuste o timeout com `THINKING_TIMEOUT` (padrão: 30 segundos)
+
+�🤝 CONTRIBUIÇÃO
+===================================================
+
+Para reportar problemas ou sugerir melhorias:
+1. Verifique se o problema já foi reportado
+2. Inclua informações do sistema
+3. Descreva os passos para reproduzir o problema
+4. Inclua mensagens de erro completas
+
+📞 SUPORTE
+===================================================
+
+Para ajuda adicional:
+- Consulte este manual
+- Verifique as mensagens de erro no terminal
+- Teste componentes individualmente
+- Consulte a documentação das bibliotecas
