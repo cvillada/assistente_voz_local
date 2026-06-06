@@ -109,6 +109,9 @@ WAKE_WORDS = [
 TTS_VOICE = 'pf_dora'  # Vozes confirmadas: pf_dora (português), af_heart/af_bella/af_jessica (inglês)
 TTS_SPEED = 1.0                      # Velocidade da fala (1.0 = normal, <1.0 = mais lento, >1.0 = mais rápido)
 
+# Taxa de amostragem do TTS (Hz)
+TTS_SAMPLE_RATE = 24000              # Kokoro gera áudio a 24kHz
+
 # ============================================================================
 # CONFIGURAÇÕES DO SISTEMA TTS (KOKORO vs QWEN3)
 # ============================================================================
@@ -124,15 +127,37 @@ QWEN3_LANGUAGE = 'portuguese'  # Idioma para síntese (em inglês: 'portuguese')
 QWEN3_USE_COMPILE = False  # torch.compile piora desempenho no MPS (testes mostraram 10x mais lento)
 
 # ============================================================================
-# CONFIGURAÇÕES DO MODELO OLLAMA
+# CONFIGURAÇÕES DO PROVEDOR LLM
 # ============================================================================
 
-OLLAMA_MODEL = 'qwen3:1.7b'         # Modelo Ollama a ser usado "Não esqueça de ajustar o THINKING_ENABLED"
-OLLAMA_TEMPERATURE = 0.7             # Criatividade (0.0 = determinístico, 1.0 = criativo)
-OLLAMA_NUM_PREDICT = 300             # Número máximo de tokens na resposta
+# Provedor de linguagem: 'ollama' (local, via Ollama) ou 'lm_studio' (local, via LM Studio API)
+LLM_PROVIDER = 'lm_studio'
+
+# Modelo a ser usado (para Ollama: 'qwen3:1.7b', 'llama3.2:3b', etc.
+# Para LM Studio: nome do modelo carregado na interface, ex: 'llama-3.2-3b-instruct')
+LLM_MODEL = 'bonsai-8b'
 
 # ============================================================================
-# CONFIGURAÇÃO DE THINKING (PROCESSAMENTO DO MODELO)
+# CONFIGURAÇÕES DO LM STUDIO (usado apenas quando LLM_PROVIDER = 'lm_studio')
+# ============================================================================
+
+LM_STUDIO_HOST = 'localhost'         # Host do servidor LM Studio
+LM_STUDIO_PORT = 1234                # Porta do servidor LM Studio (padrão: 1234)
+
+# ============================================================================
+# CONFIGURAÇÕES GERAIS DO MODELO (aplicam-se a ambos os provedores)
+# ============================================================================
+
+LLM_TEMPERATURE = 0.7                # Criatividade (0.0 = determinístico, 1.0 = criativo)
+LLM_NUM_PREDICT = 300                # Número máximo de tokens na resposta
+
+# Aliases para compatibilidade com versões anteriores
+OLLAMA_MODEL = LLM_MODEL
+OLLAMA_TEMPERATURE = LLM_TEMPERATURE
+OLLAMA_NUM_PREDICT = LLM_NUM_PREDICT
+
+# ============================================================================
+# CONFIGURAÇÃO DE THINKING (PROCESSAMENTO DO MODELO - apenas Ollama)
 # ============================================================================
 
 THINKING_ENABLED = True              # Ativa/desativa o modo thinking do modelo True ou False

@@ -7,9 +7,13 @@ openai-whisper>=20231117   # Para reconhecimento de voz (STT)
 kokoro>=0.1.0              # Para síntese de voz (TTS)
 qwen3-tts>=0.1.0           # Para síntese de voz (TTS) com Qwen3
 
-# Framework de deep learning
+# Frameworks de deep learning
 torch>=2.0.0               # PyTorch (necessário para Whisper e Kokoro)
 sox>=1.4.1                 # Para processamento de áudio
+
+# Cliente LLM (Ollama / LM Studio)
+ollama>=0.3.0              # Para LLM local via Ollama
+openai>=1.0.0              # Para LLM local via LM Studio (API compatível com OpenAI)
 
 # Processamento de áudio
 soundfile>=0.12.0          # Para leitura/escrita de arquivos de áudio

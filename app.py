@@ -1,4 +1,3 @@
-import ollama
 import whisper
 import torch
 from kokoro import KPipeline
@@ -21,7 +20,27 @@ import warnings
 # Importações para o avatar
 import pygame
 from pygame.locals import *
-import math
+
+# Gerenciador do avatar animado
+from avatar import AvatarManager
+
+# Motor TTS (Kokoro / Qwen3)
+from tts_engine import TTSManager
+
+# Detector de áudio e voz
+from audio_detector import AudioDetector
+
+# Executor de comandos locais
+from commands import CommandExecutor
+
+# Memória persistente
+from memory_manager import MemoryManager
+
+# Logging colorido
+from log import logger
+
+# Cliente LLM abstrato (Ollama / LM Studio)
+from llm_client import LLMClient, LLMError
 
 # Importar configurações do módulo config
 import config
@@ -80,6 +99,7 @@ WAKE_WORDS = config.WAKE_WORDS
 # Configurações de voz TTS
 TTS_VOICE = config.TTS_VOICE
 TTS_SPEED = config.TTS_SPEED
+TTS_SAMPLE_RATE = config.TTS_SAMPLE_RATE
 
 # Configurações do sistema TTS
 TTS_SYSTEM = config.TTS_SYSTEM
@@ -88,10 +108,18 @@ QWEN3_VOICE = config.QWEN3_VOICE
 QWEN3_LANGUAGE = config.QWEN3_LANGUAGE
 
 # Configurações dos modelos
-OLLAMA_MODEL = config.OLLAMA_MODEL
+OLLAMA_MODEL = config.OLLAMA_MODEL          # alias, prefira LLM_MODEL
 OLLAMA_TEMPERATURE = config.OLLAMA_TEMPERATURE
 OLLAMA_NUM_PREDICT = config.OLLAMA_NUM_PREDICT
 WHISPER_MODEL = config.WHISPER_MODEL
+
+# Configurações do provedor LLM
+LLM_PROVIDER = config.LLM_PROVIDER
+LLM_MODEL = config.LLM_MODEL
+LLM_TEMPERATURE = config.LLM_TEMPERATURE
+LLM_NUM_PREDICT = config.LLM_NUM_PREDICT
+LM_STUDIO_HOST = config.LM_STUDIO_HOST
+LM_STUDIO_PORT = config.LM_STUDIO_PORT
 
 # Configurações de thinking
 THINKING_ENABLED = config.THINKING_ENABLED
@@ -101,327 +129,12 @@ THINKING_TIMEOUT = config.THINKING_TIMEOUT
 # CLASSE PARA GERENCIAR O AVATAR
 # ============================================================================
 
-class AvatarManager:
-    def __init__(self, image_dir=None):
-        # Usar configuração do config.py se não for especificado
-        self.image_dir = image_dir if image_dir else config.AVATAR_IMAGE_DIR
-        self.images = {}
-        self.current_state = "normal"
-        self.window = None
-        self.screen = None
-        self.running = False
-        self.animation_thread = None
-        self.is_speaking = False
-        self.blink_timer = 0
-        self.blink_interval = config.AVATAR_BLINK_INTERVAL  # Segundos entre piscadas
-        self.last_blink_time = time.time()
-        self.speak_animation_timer = 0
-        self.speak_animation_speed = config.AVATAR_SPEAK_ANIMATION_SPEED  # Velocidade da animação de fala
-        
-        # Detectar sistema operacional
-        import platform
-        self.is_macos = platform.system() == 'Darwin'
-        
-        # Inicializar Pygame no macOS imediatamente (deve ser na thread principal)
-        if self.is_macos:
-            try:
-                pygame.init()
-                pygame.display.init()
-                print(Fore.YELLOW + "⚠️  Pygame inicializado para macOS (thread principal)")
-            except Exception as e:
-                print(Fore.RED + f"❌ Erro ao inicializar Pygame no macOS: {e}")
-        
-        # Estados possíveis do avatar (importados do config.py)
-        self.states = config.AVATAR_STATES
-    
-    def load_images(self):
-        """Carrega todas as imagens do avatar"""
-        try:
-            for state, filename in self.states.items():
-                image_path = os.path.join(self.image_dir, filename)
-                if os.path.exists(image_path):
-                    self.images[state] = pygame.image.load(image_path)
-                    print(Fore.GREEN + f"✅ Imagem carregada: {filename}")
-                else:
-                    print(Fore.RED + f"❌ Imagem não encontrada: {image_path}")
-                    return False
-            return True
-        except Exception as e:
-            print(Fore.RED + f"❌ Erro ao carregar imagens: {e}")
-            return False
-    
-    def init_window(self):
-        """Inicializa a janela do avatar"""
-        if not config.AVATAR_ENABLE:
-            print(Fore.YELLOW + "⚠️  Avatar desabilitado, ignorando init_window()")
-            return False
-        
-        try:
-            # Obter tamanho da janela do config.py
-            width, height = config.get_avatar_window_size()
-            
-            # Criar janela
-            if self.is_macos:
-                # No macOS, precisamos criar a janela na thread principal
-                return self._init_window_macos(width, height)
-            else:
-                # Para outros sistemas
-                pygame.init()
-                self.window = pygame.display.set_mode((width, height))
-                return self._finish_window_init(width, height)
-            
-        except Exception as e:
-            print(Fore.RED + f"❌ Erro ao inicializar janela do avatar: {e}")
-            return False
-    
-    def _init_window_macos(self, width, height):
-        """Inicializa a janela no macOS (deve rodar na thread principal)"""
-        try:
-            print(Fore.YELLOW + "⚠️  macOS: criando janela na thread principal...")
-            
-            # Verificar se já estamos na thread principal
-            import threading
-            if threading.current_thread() == threading.main_thread():
-                print(Fore.YELLOW + "✅ Já estamos na thread principal")
-                # Criar janela diretamente
-                self.window = pygame.display.set_mode(
-                    (width, height),
-                    pygame.RESIZABLE
-                )
-                pygame.display.set_caption(f"Avatar {ASSISTANT_NAME}")
-                return self._finish_window_init(width, height)
-            else:
-                print(Fore.YELLOW + "⚠️  Não estamos na thread principal, usando abordagem alternativa")
-                # Para o macOS, vamos usar uma abordagem mais simples:
-                # Inicializar o Pygame mas não criar a janela ainda
-                # A janela será criada quando o avatar for atualizado pela primeira vez
-                self.window = None
-                self.pending_window_size = (width, height)
-                self.pending_window_caption = f"Avatar {ASSISTANT_NAME}"
-                print(Fore.YELLOW + "⚠️  Janela será criada na primeira atualização")
-                return True
-            
-        except Exception as e:
-            print(Fore.RED + f"❌ Erro ao criar janela no macOS: {e}")
-            return False
-    
-    def _finish_window_init(self, width, height):
-        """Finaliza a inicialização da janela (comum para todos os sistemas)"""
-        try:
-            # Carregar imagens
-            if not self.load_images():
-                return False
-            
-            # Redimensionar imagens para caber na janela
-            for state in self.images:
-                self.images[state] = pygame.transform.scale(
-                    self.images[state], 
-                    (width, height)
-                )
-            
-            self.screen = pygame.display.get_surface()
-            self.running = True
-            print(Fore.GREEN + f"✅ Janela do avatar inicializada ({width}x{height})")
-            return True
-            
-        except Exception as e:
-            print(Fore.RED + f"❌ Erro ao finalizar inicialização da janela: {e}")
-            return False
-    
-    def set_speaking(self, speaking):
-        """Define se o avatar está falando"""
-        if not config.AVATAR_ENABLE:
-            return
-        
-        self.is_speaking = speaking
-        if speaking:
-            self.speak_animation_timer = 0
-    
-    def update_animation(self):
-        """Atualiza a animação do avatar"""
-        current_time = time.time()
-        
-        # Animação de piscar (quando não está falando)
-        if not self.is_speaking:
-            if current_time - self.last_blink_time > self.blink_interval:
-                # Piscar rapidamente
-                self.current_state = "olho"
-                self.last_blink_time = current_time
-                self.blink_timer = 0.2  # 200ms para piscar
-            elif self.blink_timer > 0:
-                self.blink_timer -= 0.016  # ~60 FPS
-                if self.blink_timer <= 0:
-                    self.current_state = "normal"
-        
-        # Animação de fala
-        if self.is_speaking:
-            self.speak_animation_timer += self.speak_animation_speed
-            
-            # Alternar entre boca aberta e fechada para simular fala
-            # Usar apenas chica_normal.png e chica_boca.png durante a fala
-            if math.sin(self.speak_animation_timer) > 0:
-                self.current_state = "boca"
-            else:
-                self.current_state = "normal"
-    
-    def render(self):
-        """Renderiza o avatar na tela"""
-        if not self.running or not self.screen:
-            return
-        
-        # Limpar tela
-        self.screen.fill((255, 255, 255))
-        
-        # Desenhar imagem atual
-        if self.current_state in self.images:
-            self.screen.blit(self.images[self.current_state], (0, 0))
-        
-        # Atualizar display
-        pygame.display.flip()
-    
-    def handle_events(self):
-        """Processa eventos da janela"""
-        for event in pygame.event.get():
-            if event.type == QUIT:
-                self.running = False
-            elif event.type == KEYDOWN:
-                if event.key == K_ESCAPE:
-                    self.running = False
-    
-    def update_and_render(self):
-        """Atualiza e renderiza o avatar (deve ser chamado periodicamente)"""
-        if not config.AVATAR_ENABLE:
-            return False
-        
-        # Se não temos janela mas temos tamanho pendente (macOS), criar agora
-        if self.is_macos and self.window is None and hasattr(self, 'pending_window_size'):
-            try:
-                print(Fore.YELLOW + "🪟 Criando janela do avatar na primeira atualização...")
-                width, height = self.pending_window_size
-                self.window = pygame.display.set_mode(
-                    (width, height),
-                    pygame.RESIZABLE
-                )
-                pygame.display.set_caption(self.pending_window_caption)
-                
-                # Carregar e redimensionar imagens
-                if self.load_images():
-                    for state in self.images:
-                        self.images[state] = pygame.transform.scale(
-                            self.images[state], 
-                            (width, height)
-                        )
-                    self.screen = pygame.display.get_surface()
-                    print(Fore.GREEN + f"✅ Janela do avatar criada ({width}x{height})")
-                else:
-                    print(Fore.RED + "❌ Falha ao carregar imagens para a janela")
-                    return False
-                    
-                # Limpar atributos pendentes
-                del self.pending_window_size
-                del self.pending_window_caption
-                
-            except Exception as e:
-                print(Fore.RED + f"❌ Erro ao criar janela na atualização: {e}")
-                return False
-        
-        if not self.running or not self.screen:
-            return False
-        
-        try:
-            self.handle_events()
-            self.update_animation()
-            self.render()
-            return True
-        except Exception as e:
-            print(Fore.YELLOW + f"⚠️  Erro ao atualizar avatar: {e}")
-            return False
-    
-    def start(self):
-        """Inicia o avatar"""
-        if not config.AVATAR_ENABLE:
-            print(Fore.YELLOW + "⚠️  Avatar desabilitado, ignorando start()")
-            return
-        
-        print(Fore.GREEN + f"✅ Avatar {ASSISTANT_NAME} inicializado")
-        if self.is_macos:
-            print(Fore.YELLOW + "⚠️  macOS: Avatar rodando na thread principal")
-        else:
-            print(Fore.YELLOW + "⚠️  Use update_and_render() periodicamente para animar o avatar")
-    
-    def stop(self):
-        """Para o avatar"""
-        if not config.AVATAR_ENABLE:
-            return
-        
-        self.running = False
-        if self.animation_thread:
-            self.animation_thread.join(timeout=1.0)
-        pygame.quit()
-
 # ============================================================================
 # FUNÇÕES AUXILIARES PARA PROCESSAMENTO DE VOZ
 # ============================================================================
 
-def parse_voice_config(voice_config):
-    """
-    Processa a configuração de voz para mesclagem.
-    
-    Formato aceito:
-    - 'voz1' (ex: 'pf_dora')
-    - 'voz1 X% mais voz2 Y%' (ex: 'pf_dora 80% mais if_sara 20%')
-    
-    Retorna:
-    - Para voz única: {'voz1': 100}
-    - Para mesclagem: {'voz1': percentual1, 'voz2': percentual2}
-    """
-    voice_config = voice_config.strip().lower()
-    
-    # Verificar se é uma configuração de mesclagem
-    if 'mais' in voice_config and '%' in voice_config:
-        try:
-            # Extrair as partes
-            parts = voice_config.split('mais')
-            if len(parts) != 2:
-                return {'pf_dora': 100}  # Fallback
-            
-            # Processar primeira voz
-            part1 = parts[0].strip()
-            voice1_match = re.search(r'([a-z_]+)\s+(\d+)%', part1)
-            if not voice1_match:
-                return {'pf_dora': 100}  # Fallback
-            
-            voice1 = voice1_match.group(1)
-            percent1 = int(voice1_match.group(2))
-            
-            # Processar segunda voz
-            part2 = parts[1].strip()
-            voice2_match = re.search(r'([a-z_]+)\s+(\d+)%', part2)
-            if not voice2_match:
-                return {'pf_dora': 100}  # Fallback
-            
-            voice2 = voice2_match.group(1)
-            percent2 = int(voice2_match.group(2))
-            
-            # Validar percentuais
-            if percent1 + percent2 != 100:
-                # Normalizar para totalizar 100%
-                total = percent1 + percent2
-                percent1 = int((percent1 / total) * 100)
-                percent2 = 100 - percent1
-            
-            return {voice1: percent1, voice2: percent2}
-            
-        except Exception as e:
-            print(Fore.YELLOW + f"⚠️  Erro ao processar configuração de voz '{voice_config}': {e}")
-            print(Fore.YELLOW + f"⚠️  Usando voz padrão 'pf_dora'")
-            return {'pf_dora': 100}
-    
-    # Se for uma voz única
-    else:
-        # Remover possíveis percentuais extras
-        voice = re.sub(r'\s*\d+%\s*', '', voice_config)
-        return {voice: 100}
+# parse_voice_config está definida em config.py — importar de lá
+from config import parse_voice_config
 
 class ChicaAssistant:
     def __init__(self):
@@ -502,12 +215,17 @@ class ChicaAssistant:
         print(Fore.BLUE + f"   • Para alterar, edite AUDIO_DEVICE na linha 49")
         print(Fore.CYAN + "-"*60)
         
-        # Mostrar configurações do modelo Ollama
-        print(Fore.CYAN + f"🤖 Configurações do modelo:")
-        print(Fore.CYAN + f"   • Modelo: {OLLAMA_MODEL}")
-        print(Fore.CYAN + f"   • Temperatura: {OLLAMA_TEMPERATURE}")
-        print(Fore.CYAN + f"   • Máximo de tokens: {OLLAMA_NUM_PREDICT}")
-        print(Fore.CYAN + f"   • Para alterar, edite OLLAMA_MODEL, OLLAMA_TEMPERATURE e OLLAMA_NUM_PREDICT nas linhas 85-89")
+        # Mostrar configurações do provedor LLM
+        provider_label = "Ollama" if LLM_PROVIDER == 'ollama' else "LM Studio"
+        print(Fore.CYAN + f"🤖 Configurações do provedor LLM:")
+        print(Fore.CYAN + f"   • Provedor: {provider_label}")
+        print(Fore.CYAN + f"   • Modelo: {LLM_MODEL}")
+        print(Fore.CYAN + f"   • Temperatura: {LLM_TEMPERATURE}")
+        print(Fore.CYAN + f"   • Máximo de tokens: {LLM_NUM_PREDICT}")
+        if LLM_PROVIDER == 'lm_studio':
+            print(Fore.CYAN + f"   • Host: {LM_STUDIO_HOST}:{LM_STUDIO_PORT}")
+        print(Fore.CYAN + f"   • Thinking: {'✅ ativado' if THINKING_ENABLED else '❌ desativado'} (apenas Ollama)")
+        print(Fore.CYAN + f"   • Para alterar, edite LLM_PROVIDER e LLM_MODEL no config.py")
         print(Fore.CYAN + "-"*60)
         
         # Mostrar configurações do modelo Whisper
@@ -562,104 +280,25 @@ class ChicaAssistant:
             self.tts_pipeline = KPipeline(lang_code='p', repo_id='hexgrad/Kokoro-82M')
             print(Fore.GREEN + "✅ Sistema TTS Kokoro inicializado com sucesso")
         else:
-            print(Fore.GREEN + f"🔊 Inicializando sistema TTS Qwen3 ({QWEN3_MODEL})...")
-            try:
-                # Tentar importar o Qwen3-TTS
-                from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
-                # Determinar dispositivo ideal para TTS
-                tts_device = "mps" if torch.backends.mps.is_available() else "cpu"
-                print(f"Dispositivo TTS: {tts_device}")
-                # Carregar modelo diretamente no dispositivo MPS (se disponível) para melhor performance
-                if tts_device == "mps":
-                    self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL, device_map="mps")
-                else:
-                    self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL)
-                # Verificar dispositivo real do modelo
-                if hasattr(self.qwen3_pipeline.model, 'device'):
-                    actual_device = self.qwen3_pipeline.model.device
-                else:
-                    actual_device = next(self.qwen3_pipeline.model.parameters()).device
-                print(Fore.GREEN + f"✅ Sistema TTS Qwen3 inicializado com sucesso (dispositivo: {actual_device})")
-                print(Fore.GREEN + f"   • Voz: {QWEN3_VOICE}")
-                print(Fore.GREEN + f"   • Idioma: {QWEN3_LANGUAGE}")
-                
-                # Aplicar torch.compile para otimização de desempenho (se configurado)
-                if config.QWEN3_USE_COMPILE and hasattr(torch, 'compile'):
-                    try:
-                        print(Fore.YELLOW + "   • Compilando modelo com torch.compile...")
-                        compiled_model = torch.compile(self.qwen3_pipeline.model, mode="reduce-overhead")
-                        self.qwen3_pipeline.model = compiled_model
-                        print(Fore.GREEN + "   • Modelo compilado com sucesso")
-                    except Exception as compile_e:
-                        print(Fore.YELLOW + f"   • Aviso na compilação: {compile_e}")
-                
-                # Pré-aquecimento do modelo (compila kernels MPS e reduz latência na primeira inferência)
-                try:
-                    print(Fore.YELLOW + "   • Pré-aquentendo modelo Qwen3-TTS...")
-                    _ = self.qwen3_pipeline.generate_custom_voice(
-                        text="Olá",
-                        speaker=QWEN3_VOICE,
-                        language=QWEN3_LANGUAGE,
-                        non_streaming_mode=True
-                    )
-                    self.qwen3_warmed_up = True
-                    print(Fore.GREEN + "   • Modelo pré-aquecido com sucesso")
-                except Exception as warmup_e:
-                    print(Fore.YELLOW + f"   • Aviso no pré-aquecimento: {warmup_e}")
-                    # Continuar mesmo com erro no pré-aquecimento
-            except ImportError as e:
-                print(Fore.RED + f"❌ Erro: Qwen3-TTS não está instalado")
-                print(Fore.YELLOW + f"⚠️  Instale com: pip install qwen-tts")
-                print(Fore.YELLOW + f"⚠️  Usando Kokoro-TTS como fallback...")
-                self.tts_system = 'kokoro'
-                self.tts_pipeline = KPipeline(lang_code='p', repo_id='hexgrad/Kokoro-82M')
-                print(Fore.GREEN + "✅ Sistema TTS Kokoro inicializado como fallback")
-            except Exception as e:
-                print(Fore.YELLOW + f"⚠️  Aviso ao inicializar Qwen3-TTS: {e}")
-                print(Fore.YELLOW + f"⚠️  O Qwen3-TTS está instalado, mas pode haver problemas com dependências.")
-                print(Fore.YELLOW + f"⚠️  Verifique se o SoX está instalado no sistema.")
-                print(Fore.YELLOW + f"⚠️  Continuando com Qwen3-TTS, mas pode haver erros durante a síntese...")
-                # Tentar continuar mesmo com o aviso
-                try:
-                    from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
-                    tts_device = "mps" if torch.backends.mps.is_available() else "cpu"
-                    # Carregar modelo diretamente no dispositivo MPS (se disponível) para melhor performance
-                    if tts_device == "mps":
-                        self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL, device_map="mps")
-                    else:
-                        self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL)
-                    
-                    # Aplicar torch.compile para otimização de desempenho (se configurado)
-                    if config.QWEN3_USE_COMPILE and hasattr(torch, 'compile'):
-                        try:
-                            print(Fore.YELLOW + "   • Compilando modelo com torch.compile...")
-                            compiled_model = torch.compile(self.qwen3_pipeline.model, mode="reduce-overhead")
-                            self.qwen3_pipeline.model = compiled_model
-                            print(Fore.GREEN + "   • Modelo compilado com sucesso")
-                        except Exception as compile_e:
-                            print(Fore.YELLOW + f"   • Aviso na compilação: {compile_e}")
-                    
-                    # Pré-aquecimento do modelo (compila kernels MPS e reduz latência na primeira inferência)
-                    try:
-                        print(Fore.YELLOW + "   • Pré-aquentendo modelo Qwen3-TTS...")
-                        _ = self.qwen3_pipeline.generate_custom_voice(
-                            text="Olá",
-                            speaker=QWEN3_VOICE,
-                            language=QWEN3_LANGUAGE,
-                            non_streaming_mode=True
-                        )
-                        self.qwen3_warmed_up = True
-                        print(Fore.GREEN + "   • Modelo pré-aquecido com sucesso")
-                    except Exception as warmup_e:
-                        print(Fore.YELLOW + f"   • Aviso no pré-aquecimento: {warmup_e}")
-                        # Continuar mesmo com erro no pré-aquecimento
-                except:
-                    print(Fore.RED + f"❌ Não foi possível inicializar Qwen3-TTS")
-                    print(Fore.YELLOW + f"⚠️  Usando Kokoro-TTS como fallback...")
-                    self.tts_system = 'kokoro'
-                    self.tts_pipeline = KPipeline(lang_code='p', repo_id='hexgrad/Kokoro-82M')
-                    print(Fore.GREEN + "✅ Sistema TTS Kokoro inicializado como fallback")
-        
+            self._init_qwen3_tts()
+
+        # Inicializar cliente LLM (Ollama ou LM Studio)
+        print(Fore.CYAN + "🤖 Inicializando cliente LLM...")
+        try:
+            self.llm = LLMClient(
+                provider=LLM_PROVIDER,
+                model=LLM_MODEL,
+                temperature=LLM_TEMPERATURE,
+                max_tokens=LLM_NUM_PREDICT,
+                lm_studio_host=LM_STUDIO_HOST,
+                lm_studio_port=LM_STUDIO_PORT,
+            )
+            provider_display = "Ollama" if LLM_PROVIDER == 'ollama' else f"LM Studio ({LM_STUDIO_HOST}:{LM_STUDIO_PORT})"
+            print(Fore.GREEN + f"✅ Cliente LLM inicializado: {provider_display} › {LLM_MODEL}")
+        except LLMError as e:
+            print(Fore.YELLOW + f"⚠️  Aviso ao inicializar LLM: {e}")
+            print(Fore.YELLOW + "⚠️  O assistente pode não funcionar corretamente sem um provedor LLM.")
+
         # Estado
         self.conversation_history = []
         self.audio_buffer = []
@@ -698,6 +337,16 @@ class ChicaAssistant:
         # Buffer para interrupções
         self.interruption_buffer = []
         self.interruption_enabled = True  # Permite interromper a IA
+        self._checking_interruption = False  # Lock para evitar concorrência na interrupção
+
+        # Feature: comandos locais
+        self.command_executor = CommandExecutor()
+        self.waiting_confirmation = None  # None ou dict do comando pendente
+
+        # Memória persistente
+        mem_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chica_memory.json')
+        self.memory = MemoryManager(mem_path)
+        self._conversation_count = 0  # Para rate-limited memory extraction
         self.stop_phrases = ["calado", "calada", "silêncio", "silencio"]  # Apenas comandos explícitos de interrupção
         
         # Cache para frases curtas frequentes (melhora performance do Qwen3-TTS)
@@ -707,7 +356,86 @@ class ChicaAssistant:
         
         # Configurar handler para CTRL+C
         signal.signal(signal.SIGINT, self.signal_handler)
-    
+
+    def _init_qwen3_tts(self) -> None:
+        """Inicializa o TTS Qwen3 com fallback automático para Kokoro."""
+        print(Fore.GREEN + f"🔊 Inicializando sistema TTS Qwen3 ({QWEN3_MODEL})...")
+        try:
+            from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
+            tts_device = "mps" if torch.backends.mps.is_available() else "cpu"
+            print(f"Dispositivo TTS: {tts_device}")
+            if tts_device == "mps":
+                self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL, device_map="mps")
+            else:
+                self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL)
+            actual_device = (
+                self.qwen3_pipeline.model.device
+                if hasattr(self.qwen3_pipeline.model, 'device')
+                else next(self.qwen3_pipeline.model.parameters()).device
+            )
+            print(Fore.GREEN + f"✅ Sistema TTS Qwen3 inicializado com sucesso (dispositivo: {actual_device})")
+            print(Fore.GREEN + f"   • Voz: {QWEN3_VOICE}")
+            print(Fore.GREEN + f"   • Idioma: {QWEN3_LANGUAGE}")
+
+            if config.QWEN3_USE_COMPILE and hasattr(torch, 'compile'):
+                try:
+                    print(Fore.YELLOW + "   • Compilando modelo com torch.compile...")
+                    compiled_model = torch.compile(self.qwen3_pipeline.model, mode="reduce-overhead")
+                    self.qwen3_pipeline.model = compiled_model
+                    print(Fore.GREEN + "   • Modelo compilado com sucesso")
+                except Exception as compile_e:
+                    print(Fore.YELLOW + f"   • Aviso na compilação: {compile_e}")
+
+            try:
+                print(Fore.YELLOW + "   • Pré-aquentendo modelo Qwen3-TTS...")
+                _ = self.qwen3_pipeline.generate_custom_voice(
+                    text="Olá", speaker=QWEN3_VOICE,
+                    language=QWEN3_LANGUAGE, non_streaming_mode=True
+                )
+                self.qwen3_warmed_up = True
+                print(Fore.GREEN + "   • Modelo pré-aquecido com sucesso")
+            except Exception as warmup_e:
+                print(Fore.YELLOW + f"   • Aviso no pré-aquecimento: {warmup_e}")
+        except ImportError:
+            print(Fore.RED + "❌ Erro: Qwen3-TTS não está instalado")
+            print(Fore.YELLOW + "⚠️  Instale com: pip install qwen-tts")
+            self._fallback_to_kokoro()
+        except Exception as e:
+            print(Fore.YELLOW + f"⚠️  Aviso ao inicializar Qwen3-TTS: {e}")
+            print(Fore.YELLOW + "⚠️  Tentando novamente...")
+            try:
+                from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
+                tts_device = "mps" if torch.backends.mps.is_available() else "cpu"
+                if tts_device == "mps":
+                    self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL, device_map="mps")
+                else:
+                    self.qwen3_pipeline = Qwen3TTSModel.from_pretrained(QWEN3_MODEL)
+                if config.QWEN3_USE_COMPILE and hasattr(torch, 'compile'):
+                    try:
+                        compiled_model = torch.compile(self.qwen3_pipeline.model, mode="reduce-overhead")
+                        self.qwen3_pipeline.model = compiled_model
+                    except Exception:
+                        pass
+                try:
+                    _ = self.qwen3_pipeline.generate_custom_voice(
+                        text="Olá", speaker=QWEN3_VOICE,
+                        language=QWEN3_LANGUAGE, non_streaming_mode=True
+                    )
+                    self.qwen3_warmed_up = True
+                except Exception:
+                    pass
+                print(Fore.GREEN + "✅ Qwen3-TTS inicializado na segunda tentativa")
+            except Exception:
+                print(Fore.RED + "❌ Não foi possível inicializar Qwen3-TTS")
+                self._fallback_to_kokoro()
+
+    def _fallback_to_kokoro(self) -> None:
+        """Fallback para Kokoro-TTS quando Qwen3 falha."""
+        print(Fore.YELLOW + "⚠️  Usando Kokoro-TTS como fallback...")
+        self.tts_system = 'kokoro'
+        self.tts_pipeline = KPipeline(lang_code='p', repo_id='hexgrad/Kokoro-82M')
+        print(Fore.GREEN + "✅ Sistema TTS Kokoro inicializado como fallback")
+
     def _get_audio_device_id(self):
         """
         Encontra o ID do dispositivo de áudio baseado na configuração AUDIO_DEVICE.
@@ -1057,7 +785,71 @@ class ChicaAssistant:
                 return True
         
         return False
-    
+
+    def _ask_command_confirmation(self, cmd: dict) -> None:
+        """Pergunta confirmação para executar um comando local."""
+        confirm_text = cmd["confirmacao"]
+        print(Fore.CYAN + f"\n🤖 {ASSISTANT_NAME}: {confirm_text}")
+        self.waiting_confirmation = cmd
+        clean_for_tts = self.clean_text_for_tts(confirm_text)
+        audio_file = self.text_to_speech(clean_for_tts)
+        if audio_file:
+            self.play_audio_with_interruption(audio_file)
+
+    def _handle_confirmation_response(self, text: str) -> None:
+        """Processa a resposta do usuário à confirmação."""
+        text_lower = text.lower().strip()
+        cmd = self.waiting_confirmation
+        self.waiting_confirmation = None
+
+        confirm_words = ["sim", "confirmo", "pode", "pode abrir", "ok", "tá", "claro", "vai", "pode ir"]
+        reject_words = ["não", "nao", "cancela", "cancelar", "pare", "para", "nada", "nenhum"]
+
+        if any(w in text_lower for w in confirm_words):
+            result = self.command_executor.execute(cmd)
+            print(Fore.GREEN + f"\n✅ {result}")
+            clean = self.clean_text_for_tts(result)
+            audio_file = self.text_to_speech(clean)
+            if audio_file:
+                self.play_audio_with_interruption(audio_file)
+        elif any(w in text_lower for w in reject_words):
+            msg = "Comando cancelado."
+            print(Fore.YELLOW + f"\n🤖 {ASSISTANT_NAME}: {msg}")
+            audio_file = self.text_to_speech(self.clean_text_for_tts(msg))
+            if audio_file:
+                self.play_audio_with_interruption(audio_file)
+        else:
+            msg = "Não entendi. Diga 'sim' para confirmar ou 'não' para cancelar."
+            print(Fore.YELLOW + f"\n🤖 {ASSISTANT_NAME}: {msg}")
+            self.waiting_confirmation = cmd  # Re-ask
+            audio_file = self.text_to_speech(self.clean_text_for_tts(msg))
+            if audio_file:
+                self.play_audio_with_interruption(audio_file)
+
+    def _extract_memory(self, user_text: str, ai_reply: str) -> None:
+        """Extrai fatos importantes da conversa e salva na memória.
+
+        Executa a cada 5 interações para não impactar performance.
+        Usa uma chamada LLM leve e curta.
+        """
+        try:
+            prompt = (
+                'Extraia informações importantes sobre o usuário desta conversa. '
+                'Retorne uma frase curta (máx 15 palavras) ou "NONE" se nada relevante. '
+                'Armazene apenas fatos úteis para conversas futuras '
+                '(nome, preferências, informações pessoais relevantes).'
+            )
+            resp = self.llm.chat([
+                {'role': 'system', 'content': prompt},
+                {'role': 'user', 'content': user_text},
+                {'role': 'assistant', 'content': ai_reply},
+            ])
+            fact = resp.message.content.strip()
+            if fact and fact.upper() != 'NONE':
+                self.memory.add(fact)
+        except Exception as e:
+            logger.warning(f"Erro na extração de memória: {e}")
+
     def signal_handler(self, sig, frame):
         """Handler para CTRL+C"""
         print(Fore.RED + "\n\n🛑 Interrompendo...")
@@ -1255,34 +1047,53 @@ class ChicaAssistant:
             self.is_processing = False
     
     def check_interruption(self):
-        """Verifica se há interrupção enquanto a IA está falando"""
-        if not self.interruption_buffer or self.is_processing:
+        """Verifica se há interrupção enquanto a IA está falando.
+
+        Usa janela deslizante dos últimos ~1s de áudio.
+        NÃO limpa o buffer — o áudio que chega durante a transcrição
+        (1-2s) é preservado e processado na próxima verificação.
+        """
+        if not self.interruption_buffer or self._checking_interruption:
             return False
-        
+
+        self._checking_interruption = True
         try:
-            # Combinar buffers de interrupção
-            if len(self.interruption_buffer) > 0:
-                interruption_data = np.concatenate(self.interruption_buffer, axis=0)
-                
-                # Salvar temporariamente
-                temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-                sf.write(temp_file.name, interruption_data, SAMPLE_RATE)
-                
-                # Transcrever
-                result = self.stt_model.transcribe(temp_file.name, language="pt")
-                user_text = result["text"].strip().lower()
-                
-                # Limpar arquivo
+            # Janela deslizante: apenas os últimos ~1s de áudio
+            chunk_count = max(1, int(1.0 * SAMPLE_RATE / CHUNK))
+            recent = self.interruption_buffer[-chunk_count:]
+
+            # Só transcrever se houver áudio suficiente (mín 0.5s)
+            min_chunks = int(0.5 * SAMPLE_RATE / CHUNK)
+            if len(recent) < min_chunks:
+                return False
+
+            interruption_data = np.concatenate(recent, axis=0)
+
+            temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            sf.write(temp_file.name, interruption_data, SAMPLE_RATE)
+
+            result = self.stt_model.transcribe(temp_file.name, language="pt")
+            user_text = result["text"].strip().lower()
+
+            try:
                 os.unlink(temp_file.name)
-                
-                # Verificar se é comando de parar
-                if user_text and self.check_for_stop_command(user_text):
-                    print(Fore.YELLOW + f"\n⏸️  {ASSISTANT_NAME} interrompida!")
-                    return True
-        
-        except:
+            except Exception:
+                pass
+
+            # NÃO limpar o buffer! O áudio que chegou durante a
+            # transcrição será processado na próxima verificação.
+            # A janela deslizante (last ~1s) evita re-processar
+            # áudio velho.
+
+            if user_text and self.check_for_stop_command(user_text):
+                print(Fore.YELLOW + f"\n⏸️  {ASSISTANT_NAME} interrompida!")
+                return True
+
+        except Exception:
             pass
-        
+        finally:
+            self._checking_interruption = False
+
         return False
     
     def process_interaction(self, audio_path):
@@ -1324,9 +1135,30 @@ class ChicaAssistant:
         if self.check_for_stop_command(user_text):
             print(Fore.YELLOW + f"\n⏸️  Comando de parar detectado")
             return
-        
+
+        # 3.5 Verificar se estamos aguardando confirmação de comando
+        if self.waiting_confirmation is not None:
+            self._handle_confirmation_response(user_text)
+            return
+
+        # 3.6 Detectar comandos locais (abrir navegador, etc.)
+        cmd = self.command_executor.parse(user_text)
+        if cmd:
+            self._ask_command_confirmation(cmd)
+            return
+
         # 4. Se estiver ativa, processar normalmente
-        messages = [{'role': 'system', 'content': f'Você é a {ASSISTANT_NAME}, uma assistente virtual simpática e prestativa. Seja concisa e natural. Português Brasil. Responda SEM usar emojis, asteriscos, parênteses ou caracteres especiais na sua resposta. Mantenha respostas claras e diretas. Respostas curtas (máximo 2-3 frases).'}]
+        # Incluir memórias persistentes no system prompt
+        memory_context = self.memory.get_context()
+        system_prompt = (
+            f'Você é a {ASSISTANT_NAME}, uma assistente virtual simpática e prestativa. '
+            'Seja concisa e natural. Português Brasil. '
+            'Responda SEM usar emojis, asteriscos, parênteses ou caracteres especiais '
+            'na sua resposta. Mantenha respostas claras e diretas (máximo 2-3 frases).'
+        )
+        if memory_context:
+            system_prompt += f' {memory_context}'
+        messages = [{'role': 'system', 'content': system_prompt}]
         
         # Histórico recente (limitado para melhor performance)
         for msg in self.conversation_history[-3:]:  # Reduzido de 4 para 3
@@ -1334,13 +1166,9 @@ class ChicaAssistant:
         
         messages.append({'role': 'user', 'content': user_text})
         
-        # Obter resposta com timeout
+        # Obter resposta via LLMClient (Ollama ou LM Studio)
         try:
-            response = ollama.chat(
-                model=OLLAMA_MODEL,
-                messages=messages,
-                options={'temperature': OLLAMA_TEMPERATURE, 'num_predict': OLLAMA_NUM_PREDICT}
-            )
+            response = self.llm.chat(messages)
             
             # Extrair resposta considerando o campo thinking
             ai_reply = self.extract_ai_response(response)
@@ -1374,7 +1202,7 @@ class ChicaAssistant:
             else:
                 print(Fore.GREEN + f"\n🤖 {ASSISTANT_NAME}: {clean_display}")
             
-        except Exception as e:
+        except (LLMError, Exception) as e:
             print(Fore.RED + f"Erro na IA: {e}")
             ai_reply = "Desculpe, tive um problema ao processar."
             return
@@ -1395,7 +1223,12 @@ class ChicaAssistant:
         
         # 8. Atualizar contador de inatividade após resposta
         self.reset_inactivity_counter()
-    
+
+        # 9. Extrair memórias periodicamente (a cada 5 interações)
+        self._conversation_count += 1
+        if self._conversation_count % 5 == 0:
+            self._extract_memory(user_text, ai_reply)
+
     def text_to_speech(self, text):
         """Converte texto para áudio"""
         if not text:
@@ -1539,7 +1372,7 @@ class ChicaAssistant:
                 # Suavizar transições entre chunks
                 if len(audio_chunks) > 1:
                     # Aplicar fade in/out suave entre chunks
-                    fade_duration = int(0.02 * 24000)  # 20ms fade
+                    fade_duration = int(0.02 * TTS_SAMPLE_RATE)  # 20ms fade
                     for i in range(1, len(audio_chunks)):
                         if len(audio_chunks[i-1]) > fade_duration and len(audio_chunks[i]) > fade_duration:
                             # Fade out no final do chunk anterior
@@ -1556,7 +1389,7 @@ class ChicaAssistant:
                 
                 # Salvar em arquivo temporário
                 temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-                sf.write(temp_file.name, final_audio, 24000)
+                sf.write(temp_file.name, final_audio, TTS_SAMPLE_RATE)
                 
                 return temp_file.name
                 
@@ -1776,21 +1609,38 @@ def main():
         print("pip install sounddevice soundfile colorama")
         return
     
-    # Verificar se Ollama está rodando
-    try:
-        import requests
-        
-        response = requests.get('http://localhost:11434/api/tags', timeout=2)
-        if response.status_code != 200:
-            print(Fore.YELLOW + "⚠️  Ollama não está respondendo. Certifique-se de que está rodando:")
-            print("  ollama serve")
+    # Verificar se o provedor LLM está rodando
+    if LLM_PROVIDER == 'ollama':
+        try:
+            import requests
+            response = requests.get('http://localhost:11434/api/tags', timeout=2)
+            if response.status_code != 200:
+                print(Fore.YELLOW + "⚠️  Ollama não está respondendo. Certifique-se de que está rodando:")
+                print("  ollama serve")
+                print("\nContinuando em 3 segundos...")
+                time.sleep(3)
+        except:
+            print(Fore.YELLOW + "⚠️  Não foi possível conectar ao Ollama local.")
+            print("  Execute: ollama serve")
             print("\nContinuando em 3 segundos...")
             time.sleep(3)
-    except:
-        print(Fore.YELLOW + "⚠️  Não foi possível conectar ao Ollama local.")
-        print("  Execute: ollama serve")
-        print("\nContinuando em 3 segundos...")
-        time.sleep(3)
+    else:
+        # LM Studio - verificação rápida
+        try:
+            import requests
+            resp = requests.get(f'http://{LM_STUDIO_HOST}:{LM_STUDIO_PORT}/v1/models', timeout=2)
+            if resp.status_code != 200:
+                print(Fore.YELLOW + f"⚠️  LM Studio ({LM_STUDIO_HOST}:{LM_STUDIO_PORT}) não respondeu corretamente.")
+                print(f"  Certifique-se de que o servidor LM Studio está rodando e a API está habilitada.")
+                print("\nContinuando em 3 segundos...")
+                time.sleep(3)
+        except:
+            print(Fore.YELLOW + f"⚠️  Não foi possível conectar ao LM Studio em {LM_STUDIO_HOST}:{LM_STUDIO_PORT}.")
+            print("  Certifique-se de que:")
+            print("  • O LM Studio está rodando")
+            print("  • A API está habilitada (Settings > Enable API)")
+            print("\nContinuando em 3 segundos...")
+            time.sleep(3)
     
     # Criar e executar assistente
     chica = ChicaAssistant()
