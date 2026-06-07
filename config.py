@@ -100,6 +100,19 @@ WAKE_WORDS = [
     "hei shica",     # Pronúncia alternativa em inglês
 ]
 
+# Palavras que interrompem a fala da assistente
+STOP_PHRASES = [
+    "calado",
+    "calada",
+    "silêncio",
+    "silencio",
+    "para",
+    "pare",
+    "chega",
+    "basta",
+    "stop",
+]
+
 # ============================================================================
 # CONFIGURAÇÕES DE VOZ TTS
 # ============================================================================
@@ -107,10 +120,20 @@ WAKE_WORDS = [
 # Configuração de voz TTS
 # Formato: 'voz1' ou 'voz1 X% mais voz2 Y%' (ex: 'pf_dora 80% mais if_sara 20%')
 TTS_VOICE = 'pf_dora'  # Vozes confirmadas: pf_dora (português), af_heart/af_bella/af_jessica (inglês)
-TTS_SPEED = 1.0                      # Velocidade da fala (1.0 = normal, <1.0 = mais lento, >1.0 = mais rápido)
+TTS_SPEED = 1.1                      # Velocidade da fala (1.0 = normal, <1.0 = mais lento, >1.0 = mais rápido)
 
 # Taxa de amostragem do TTS (Hz)
 TTS_SAMPLE_RATE = 24000              # Kokoro gera áudio a 24kHz
+
+# Modelo Kokoro (HuggingFace repo_id)
+# Opções comuns: 'hexgrad/Kokoro-82M' (padrão, 82M params),
+#                'hexgrad/Kokoro-82M-v2.0' (versão mais nova)
+TTS_KOKORO_MODEL = 'hexgrad/Kokoro-82M'
+
+# Código de idioma do Kokoro
+# 'p' = português, 'a' = inglês americano, 'b' = inglês britânico,
+# 'j' = japonês, 'k' = coreano, 'z' = chinês, 'f' = francês, 'e' = espanhol
+TTS_KOKORO_LANG = 'p'
 
 # ============================================================================
 # CONFIGURAÇÕES DO SISTEMA TTS (KOKORO vs QWEN3)
@@ -127,6 +150,31 @@ QWEN3_LANGUAGE = 'portuguese'  # Idioma para síntese (em inglês: 'portuguese')
 QWEN3_USE_COMPILE = False  # torch.compile piora desempenho no MPS (testes mostraram 10x mais lento)
 
 # ============================================================================
+# CONFIGURAÇÕES DO EDGE-TTS (ONLINE — REQUER INTERNET)
+# ============================================================================
+
+# Sistema TTS: 'kokoro' (padrão, local), 'qwen3' (local) ou 'edge' (online)
+# Edge-TTS usa a API gratuita do Microsoft Edge para síntese neural.
+# Requer internet. Se ficar offline, faz fallback automático para Kokoro.
+#TTS_SYSTEM = 'edge'
+
+# Voz padrão do Edge-TTS (pt-BR)
+# Lista completa de vozes disponíveis:
+#   pt-BR-ThalitaMultilingualNeural  (Feminino, natural) ← recomendada
+#   pt-BR-AntonioNeural              (Masculino)
+#   pt-BR-FranciscaNeural            (Feminino)
+#
+# Outras vozes em inglês (caso mude o idioma):
+#   en-US-AriaNeural       (Feminino)
+#   en-US-GuyNeural        (Masculino)
+#   en-GB-SoniaNeural      (Feminino, britânico)
+#   en-GB-RyanNeural       (Masculino, britânico)
+EDGE_TTS_VOICE = 'pt-BR-ThalitaMultilingualNeural'
+
+# Velocidade da fala: 0.5 (lento) a 2.0 (rápido), padrão 1.0
+EDGE_TTS_SPEED = 1.0
+
+# ============================================================================
 # CONFIGURAÇÕES DO PROVEDOR LLM
 # ============================================================================
 
@@ -135,7 +183,7 @@ LLM_PROVIDER = 'lm_studio'
 
 # Modelo a ser usado (para Ollama: 'qwen3:1.7b', 'llama3.2:3b', etc.
 # Para LM Studio: nome do modelo carregado na interface, ex: 'llama-3.2-3b-instruct')
-LLM_MODEL = 'bonsai-8b'
+LLM_MODEL = 'bonsai-4b'
 
 # ============================================================================
 # CONFIGURAÇÕES DO LM STUDIO (usado apenas quando LLM_PROVIDER = 'lm_studio')
@@ -164,10 +212,31 @@ THINKING_ENABLED = True              # Ativa/desativa o modo thinking do modelo 
 THINKING_TIMEOUT = 30                # Timeout em segundos para processamento do thinking
 
 # ============================================================================
+# CONFIGURAÇÕES DE MEMÓRIA PERSISTENTE
+# ============================================================================
+
+# Número máximo de itens em cada arquivo de memória
+# (tanto assistant_memory.md quanto assistant_user.md)
+# Quando estourar, remove os mais antigos automaticamente
+MEMORY_MAX_ITEMS = 30
+
+# Limite de caracteres para cada arquivo de memória (estilo Hermes)
+# Quando estourar, remove entradas mais antigas automaticamente
+MEMORY_CHAR_LIMIT = 2200       # assistant_memory.md (~800 tokens)
+MEMORY_USER_CHAR_LIMIT = 1375  # assistant_user.md (~500 tokens)
+
+# ============================================================================
 # CONFIGURAÇÕES DO MODELO WHISPER
 # ============================================================================
 
-WHISPER_MODEL = 'base'                # Modelo Whisper: 'tiny', 'base', 'small', 'medium', 'large', 'turbo'
+WHISPER_MODEL = 'turbo'                # Modelo: 'tiny', 'base', 'small', 'medium', 'large', 'turbo'
+WHISPER_LANGUAGE = 'pt'               # Idioma: 'pt' (português), 'en' (inglês), 'es' (espanhol), etc.
+
+# Backend do STT: 'auto' (detecta hardware), 'whisper' (original, PyTorch), 'faster-whisper' (CTranslate2)
+# - Mac Apple Silicon → 'whisper' (usa MPS/GPU, mais rápido)
+# - ARM / SBC / CPU → 'faster-whisper' (CTranslate2 otimizado)
+# - NVIDIA GPU → 'faster-whisper' (suporta CUDA)
+STT_BACKEND = 'auto'
 
 # ============================================================================
 # FUNÇÕES AUXILIARES DE CONFIGURAÇÃO

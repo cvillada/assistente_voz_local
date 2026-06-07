@@ -3,7 +3,7 @@
 
 # Modelos de IA
 ollama>=0.3.0              # Para LLM local (Ollama)
-openai-whisper>=20231117   # Para reconhecimento de voz (STT)
+faster-whisper>=1.0.0          # Para reconhecimento de voz (STT) — 4x mais rápido que whisper original
 kokoro>=0.1.0              # Para síntese de voz (TTS)
 qwen3-tts>=0.1.0           # Para síntese de voz (TTS) com Qwen3
 

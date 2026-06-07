@@ -25,8 +25,7 @@ from typing import Callable, Optional
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-import torch
-import whisper
+from faster_whisper import WhisperModel
 
 import config
 from log import logger
@@ -69,8 +68,8 @@ class AudioDetector:
         self._on_inactivity: Optional[Callable[[], None]] = None
         self._stream: Optional[sd.InputStream] = None
 
-        # STT (Whisper)
-        self.stt_model: Optional[whisper.Whisper] = None
+        # STT (faster-whisper)
+        self.stt_model: Optional['WhisperModel'] = None
 
     # ------------------------------------------------------------------
     # Dispositivo de áudio
@@ -102,32 +101,34 @@ class AudioDetector:
     # ------------------------------------------------------------------
 
     def load_stt_model(self, model_name: str = 'base') -> None:
-        """Carrega o modelo Whisper para transcrição."""
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
-        problematic = ['small', 'medium', 'large', 'turbo']
-        if model_name in problematic and device == "mps":
-            logger.warning(f"Modelo '{model_name}' tem problemas com MPS, usando CPU")
-            device = "cpu"
+        """Carrega o modelo Whisper (faster-whisper) para transcrição."""
+        hf_name = "large-v3-turbo" if model_name == "turbo" else model_name
         try:
-            self.stt_model = whisper.load_model(model_name, device=device)
-            logger.success(f"Whisper '{model_name}' carregado em {device}")
+            self.stt_model = WhisperModel(
+                hf_name, device="cpu", compute_type="int8",
+                cpu_threads=4, num_workers=2,
+            )
+            logger.success(f"faster-whisper '{model_name}' carregado (int8)")
         except Exception:
-            logger.warning(f"Falha ao carregar '{model_name}' em {device}, tentando CPU...")
+            logger.warning(f"Falha ao carregar '{model_name}', tentando 'tiny'...")
             try:
-                self.stt_model = whisper.load_model(model_name, device="cpu")
-                logger.success(f"Whisper '{model_name}' carregado em CPU")
-            except Exception:
-                logger.warning(f"Usando modelo 'tiny' como fallback")
-                self.stt_model = whisper.load_model("tiny", device="cpu")
-                logger.success(f"Whisper 'tiny' carregado como fallback")
+                self.stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+                logger.success("faster-whisper 'tiny' carregado como fallback")
+            except Exception as e:
+                logger.error(f"Erro crítico ao carregar modelo Whisper: {e}")
 
     def transcribe(self, audio_path: str) -> str:
-        """Transcreve um arquivo de áudio para texto."""
+        """Transcreve um arquivo de áudio para texto (faster-whisper)."""
         if not self.stt_model:
             return ""
         try:
-            result = self.stt_model.transcribe(audio_path, language="pt")
-            return result["text"].strip()
+            segments, _info = self.stt_model.transcribe(
+                audio_path,
+                language=config.WHISPER_LANGUAGE,
+                beam_size=3,
+                vad_filter=True,
+            )
+            return " ".join(seg.text for seg in segments).strip()
         except Exception as e:
             logger.error(f"Erro na transcrição: {e}")
             return ""
@@ -175,12 +176,12 @@ class AudioDetector:
     def check_stop_command(self, text: str) -> bool:
         """Verifica se o texto contém comando para parar a fala."""
         text_lower = text.lower().strip()
-        stop_phrases = ["calado", "calada", "silêncio", "silencio"]
-        for phrase in stop_phrases:
-            if phrase in text_lower:
+        # Busca por palavra inteira (evita "para" em "parabéns")
+        for phrase in config.STOP_PHRASES:
+            if re.search(r'\b' + re.escape(phrase) + r'\b', text_lower):
                 return True
         words = text_lower.split()
-        if len(words) >= 2 and config.ASSISTANT_NAME.lower() in words[0] and words[1] in ["calado", "calada", "silêncio"]:
+        if len(words) >= 2 and config.ASSISTANT_NAME.lower() in words[0] and words[1] in config.STOP_PHRASES:
             return True
         return False
 

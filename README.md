@@ -1,53 +1,57 @@
-# 🎤 Chica Voice Assistant with Animated Avatar
+# 🎤 Chica — Assistente de Voz com Avatar Animado
 
-A local voice assistant with animated avatar that uses local models for natural language processing, speech synthesis, and speech recognition. Created by Claudinei Villada with help from Vibe Code.
+Assistente de voz local com avatar animado, usando modelos locais para NLP, síntese e reconhecimento de fala. Criado por **Claudinei Villada**.
 
-## ✨ Features
+## ✨ Funcionalidades
 
-- **🎤 Voice Recognition**: Real-time speech-to-text using Whisper (local)
-- **🤖 Dual LLM Support**: Works with **Ollama** (default) or **LM Studio**
-- **🗣️ Dual TTS System**:
-  - **Kokoro-TTS** (default) — Natural Portuguese voice (pf_dora)
-  - **Qwen3-TTS** — Advanced system with voice Serena
-- **👤 Animated Avatar**: Real-time avatar animation synchronized with speech (Pygame)
-- **🔊 Wake Word Detection**: Multiple wake words for activation ("olá chica", "ei chica", etc.)
-- **🖥️ Local Commands**: Execute system commands with voice confirmation ("abra o navegador")
-- **🧠 Persistent Memory**: Remembers important facts between conversations
-- **⚡ Real-time Processing**: Low-latency adaptive noise detection
-- **📁 Modular Architecture**: Clean separation of concerns across 9 modules
-- **🔄 Automatic Fallback**: Kokoro-TTS fallback if Qwen3-TTS fails
-- **🔇 Voice Interruption**: Say "calado" or "silêncio" to stop speech
+- **🎤 Reconhecimento de Voz**: STT em tempo real com Whisper (modelo `turbo`).
+  Usa **whisper original** (MPS/GPU) no Mac Apple Silicon e **faster-whisper** (CTranslate2, 4x mais rápido) em CPU/ARM.
+  Detecção automática de hardware — não precisa configurar nada.
+- **🤖 LLM Local**: Suporte a **LM Studio** (padrão) ou **Ollama**
+- **🗣️ TTS Triplo**:
+  - **Kokoro-TTS** (padrão) — Voz natural em português (pf_dora)
+  - **Edge-TTS** — Síntese neural online (voz Thalita, pt-BR), com fallback automático para Kokoro se ficar offline
+  - **Qwen3-TTS** — Sistema avançado com voz Serena
+- **👤 Avatar Animado**: Animação em tempo real sincronizada com a fala (Pygame)
+- **🔊 Wake Word**: Múltiplas palavras de ativação ("olá chica", "ei chica", etc.)
+- **🖥️ Comandos Locais**: Executa comandos do sistema com confirmação por voz ("abra o navegador")
+- **🔍 Pesquisa na Web**: Detecta automaticamente quando pesquisar na internet
+- **📊 Informações do Sistema**: Consultas sobre disco, RAM, CPU, bateria, IP, etc.
+- **🧠 Memória Persistente v2**: Lembra fatos importantes entre conversas (2 arquivos markdown)
+- **⚡ Processamento em Tempo Real**: Detecção adaptativa de ruído com baixa latência
+- **📁 Arquitetura Modular**: Separação clara em 12 módulos
+- **🔄 Fallback Automático**: Kokoro-TTS como fallback se Edge-TTS ou Qwen3 falharem
+- **🔇 Interrupção por Voz**: Diga "calado" ou "silêncio" para interromper a fala
 
-## 📋 System Requirements
+## 📋 Requisitos de Sistema
 
 1. 🐍 **Python 3.8+**
-2. 💾 **8GB RAM** (16GB recommended)
-3. 🎤 Working microphone
-4. 🔊 Working speakers
-5. 🌐 Internet connection (for initial model downloads)
-6. 🖥️ Graphical system (for avatar — optional)
+2. 💾 **8GB RAM** (16GB recomendado)
+3. 🎤 Microfone funcionando
+4. 🔊 Alto-falantes funcionando
+5. 🌐 Internet (para download inicial de modelos; Edge-TTS requer internet)
+6. 🖥️ Sistema gráfico (para o avatar — opcional)
 
-## ⚙️ Installation
+## ⚙️ Instalação
 
-### 1. Install Python 3.8+ if needed:
+### 1. Instale o Python 3.8+ se necessário:
 - **Windows**: https://www.python.org/downloads/
 - **macOS**: `brew install python`
 - **Linux**: `sudo apt install python3 python3-pip`
 
-### 2. Create virtual environment:
+### 2. Crie um ambiente virtual:
 ```bash
 python -m venv venv
 # Windows: venv\Scripts\activate
 # macOS/Linux: source venv/bin/activate
 ```
 
-### 3. Install Python dependencies:
+### 3. Instale as dependências Python:
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Install system dependencies for Pygame (optional — avatar only):
-
+### 4. Dependências de sistema para Pygame (opcional — apenas avatar):
 **macOS:**
 ```bash
 brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf portaudio
@@ -58,147 +62,249 @@ brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf portaudio
 sudo apt-get install python3-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev portaudio19-dev sox
 ```
 
-## 🔧 LLM Provider (Choose One)
+## 🔧 Provedor LLM (Escolha Um)
 
-### Option A — Ollama (default)
-1. Download: https://ollama.ai/
-2. Start: `ollama serve`
-3. Pull a model: `ollama pull qwen3:1.7b`
+### Opção A — LM Studio (padrão)
+1. Baixe: https://lmstudio.ai/
+2. Carregue um modelo na interface (ex: `bonsai-4b`)
+3. Habilite a API: Settings > Enable API (porta 1234)
+4. Instale: `pip install openai`
 
-### Option B — LM Studio (alternative)
-1. Download: https://lmstudio.ai/
-2. Load a model in the UI
-3. Enable API: Settings > Enable API (port 1234)
-4. Install: `pip install openai`
-5. Edit `config.py`:
-   ```python
-   LLM_PROVIDER = 'lm_studio'
-   LLM_MODEL = 'bonsai-8b'   # or your loaded model
-   ```
+### Opção B — Ollama (alternativa)
+1. Baixe: https://ollama.ai/
+2. Inicie: `ollama serve`
+3. Baixe um modelo: `ollama pull qwen3:1.7b`
 
-## 🎯 Configuration
+## 🎯 Configuração
 
-All settings are centralized in `config.py`:
+Todas as configurações estão centralizadas em `config.py`:
 
 ```python
-# LLM Provider
-LLM_PROVIDER = 'lm_studio'        # 'ollama' or 'lm_studio'
-LLM_MODEL = 'bonsai-8b'
+# Provedor LLM
+LLM_PROVIDER = 'lm_studio'        # 'lm_studio' ou 'ollama'
+LLM_MODEL = 'bonsai-4b'
 LLM_TEMPERATURE = 0.7
 LLM_NUM_PREDICT = 300
 
-# Assistant
+# Assistente
 ASSISTANT_NAME = "Chica"
 ASSISTANT_GREETING = " Eu sou a Chica, sua assistente. Como posso ajudar?"
 
-# Avatar (optional — saves memory)
-AVATAR_ENABLE = True               # Set False to disable
+# Avatar (opcional — economiza memória)
+AVATAR_ENABLE = True               # False para desabilitar
 
 # Wake words
 WAKE_WORDS = ["olá chica", "ei chica", "chica", ...]
 
-# TTS Voice
-TTS_VOICE = 'pf_dora'             # Portuguese voice for Kokoro
-TTS_SYSTEM = 'kokoro'             # 'kokoro' or 'qwen3'
-TTS_SAMPLE_RATE = 24000
+# TTS (Kokoro / Edge / Qwen3)
+TTS_SYSTEM = 'kokoro'             # 'kokoro', 'edge' ou 'qwen3'
+TTS_VOICE = 'pf_dora'             # Kokoro: pf_dora (pt-BR)
+EDGE_TTS_VOICE = 'pt-BR-ThalitaMultilingualNeural'  # Edge-TTS
 
-# Microphone sensitivity
+# Sensibilidade do microfone
 SPEECH_THRESHOLD = 0.005
 SILENCE_DURATION = 1.5
 INACTIVITY_TIMEOUT = 15.0
+AUDIO_DEVICE = "Isolamento de Voz"
 
-# Speech-to-Text (Whisper)
-WHISPER_MODEL = 'base'             # 'tiny', 'base', 'small', 'medium', 'large'
+# Speech-to-Text (Whisper / faster-whisper)
+WHISPER_MODEL = 'turbo'            # 'tiny', 'base', 'small', 'medium', 'large', 'turbo'
+WHISPER_LANGUAGE = 'pt'
+STT_BACKEND = 'auto'               # 'auto' (detecta), 'whisper' (GPU), 'faster-whisper' (CPU)
+
+# Memória
+MEMORY_MAX_ITEMS = 30
+MEMORY_CHAR_LIMIT = 2200
+MEMORY_USER_CHAR_LIMIT = 1375
 ```
 
-## 🚀 Running
+### Áudio: Isolamento de Voz (macOS)
 
-### 1. Start your LLM provider:
+No MacBook, você pode configurar `AUDIO_DEVICE` em `config.py`:
+- `"Padrão"` — Dispositivo padrão do sistema
+- `"Isolamento de Voz"` — Filtra ruído de fundo (recomendado)
+- Nome específico — Ex: `"MacBook Pro Microfone"`
+
+### TTS: Fallback Automático
+
+A Chica suporta 3 sistemas TTS:
+
+| Sistema | Online? | Qualidade | Latência |
+|---------|---------|-----------|----------|
+| **Kokoro** (padrão) | ❌ Local | Boa | Baixa |
+| **Edge-TTS** | ✅ Requer internet | Excelente (neural) | Média |
+| **Qwen3-TTS** | ❌ Local | Avançada | Alta |
+
+Se o **Edge-TTS** ou **Qwen3-TTS** falharem, o sistema faz **fallback automático** para Kokoro.
+
+## 🚀 Executando
+
+### 1. Inicie o provedor LLM:
+- **LM Studio**: App aberto com API habilitada
 - **Ollama**: `ollama serve`
-- **LM Studio**: Open app with API enabled
 
-### 2. Run the assistant:
+### 2. Execute a assistente:
 ```bash
 python app.py
 ```
 
-### 3. At startup, choose TTS system:
-- `1` = Kokoro-TTS (default, Portuguese)
-- `2` = Qwen3-TTS (voice Serena)
-- `3` = Use config.py setting
+### 3. Na inicialização, escolha o TTS:
+- `1` = Kokoro-TTS (padrão, português)
+- `2` = Qwen3-TTS (voz Serena)
+- `3` = Edge-TTS (voz Thalita, requer internet)
+- `4` = Usar config.py
 
-## 🗣️ Voice Commands
+## 🗣️ Comandos de Voz
 
-| Command | Action |
-|---------|--------|
-| "olá chica" / "ei chica" | Wake up the assistant |
-| "qual é a capital do Brasil?" | Normal conversation |
-| "abra o navegador" | Open browser (asks confirmation) |
-| "abra o Spotify" | Open Spotify |
-| "abra o VS Code" | Open Visual Studio Code |
-| "abra o terminal" | Open terminal |
-| "abra o Discord" | Open Discord |
-| "calado" / "silêncio" | Interrupt speech |
+| Comando | Ação |
+|---------|------|
+| "olá chica" / "ei chica" | Acordar a assistente |
+| "qual é a capital do Brasil?" | Conversa normal (via LLM) |
+| "pesquise na internet sobre Python" | Pesquisa na web automática |
+| "qual o tamanho do disco?" | Informações do sistema |
+| "abra o navegador" | Abrir navegador (pede confirmação) |
+| "abra o Spotify" | Abrir Spotify |
+| "abra o VS Code" | Abrir Visual Studio Code |
+| "abra o terminal" | Abrir terminal |
+| "abra o Discord" | Abrir Discord |
+| "calado" / "silêncio" | Interromper a fala |
 
-All local commands require voice confirmation. Say "sim" to confirm, "não" to cancel.
+### Detecção Inteligente de Intenção
 
-## 🧠 Persistent Memory
+A Chica usa um sistema de **2 camadas** para evitar falsos positivos em comandos locais:
 
-Chica remembers important information between conversations:
-- Automatically extracts facts (name, preferences, personal info)
-- Stored in `chica_memory.json` (max 10 entries)
-- Expires after 30 days
-- Injected into context — no performance impact
-- Extracted every 5 interactions via LLM
+1. **Heurísticas** (rápida, sem LLM): Detecta quando o usuário está perguntando sobre um app, não mandando abri-lo
+   - *"calendário **dos** jogos"* → pergunta (não abre Calendar)
+   - *"**qual** o melhor navegador?"* → pergunta
+   - *"**pesquise** no navegador sobre python"* → pesquisa
+2. **Verificação por LLM** (para casos ambíguos): Consulta o modelo local para classificar COMANDO vs PERGUNTA
 
-## 📁 Project Structure
+Todos os comandos locais exigem confirmação por voz. Diga **"sim"** para confirmar, **"não"** para cancelar.
+
+## 🧠 Memória Persistente v2
+
+A Chica lembra de informações importantes entre conversas:
+
+- **Extração automática** de fatos (nome, idade, preferências, gostos) em TODA interação via regex imediata
+- **Extração via LLM** a cada interação para fatos complexos
+- Armazenamento em **2 arquivos markdown** legíveis/editáveis:
+  - `assistant_memory.md` — Fatos e memórias (limite: 2200 chars)
+  - `assistant_user.md` — Perfil do usuário (limite: 1375 chars)
+- Expira entradas antigas automaticamente quando estoura o limite
+- Injetado no contexto do LLM — sem impacto na performance
+
+## 📁 Estrutura do Projeto
 
 ```
 kokoro/
-├── app.py              (~1650 lines)  — Main entry point
-├── config.py           (~ 242 lines)  — Centralized configuration
-├── llm_client.py       (~ 284 lines)  — Ollama / LM Studio client
-├── avatar.py           (~ 252 lines)  — Animated Pygame avatar
-├── tts_engine.py       (~ 317 lines)  — Text-to-speech (Kokoro / Qwen3)
-├── audio_detector.py   (~ 344 lines)  — Voice capture and detection
-├── commands.py         (~ 177 lines)  — Local OS command execution
-├── memory_manager.py   (~ 186 lines)  — Persistent memory
-├── log.py              (~ 109 lines)  — Colored structured logging
-├── chica_img/          ─ Avatar images (PNG)
-├── chica_memory.json   ─ Saved memories (auto-generated)
-├── requirements.txt    ─ Python dependencies
-├── leiame.txt          ─ Documentation (Portuguese)
-└── README.md           ─ This file
+├── app.py              (~1760 linhas)  — Entry point principal
+├── config.py           (~ 305 linhas)  — Configurações centralizadas
+├── llm_client.py       (~ 284 linhas)  — Cliente Ollama / LM Studio
+├── tts_engine.py       (~ 317 linhas)  — Síntese de voz (Kokoro / Edge / Qwen3)
+├── audio_detector.py   (~ 344 linhas)  — Captura e detecção de voz (Whisper)
+├── commands.py         (~ 240 linhas)  — Comandos locais + detecção de intenção
+├── memory_manager.py   (~ 186 linhas)  — Memória persistente v2
+├── system_info.py      (~ 250 linhas)  — Consultas de sistema (disco, RAM, CPU, IP)
+├── avatar.py           (~ 252 linhas)  — Avatar Pygame animado
+├── log.py              (~ 109 linhas)  — Logging colorido estruturado
+├── chica_img/          ─ Imagens do avatar (PNG)
+├── assistant_memory.md   ─ Memórias salvas (auto-gerado)
+├── assistant_user.md     ─ Perfil do usuário (auto-gerado)
+├── requirements.txt    ─ Dependências Python
+├── leiame.txt          ─ Manual em português
+└── README.md           ─ Este arquivo
 ```
 
-## 🔄 System Flow
+### Módulos do Sistema
+
+| Módulo | Função |
+|--------|--------|
+| `app.py` | Orquestrador principal: áudio → STT → LLM → TTS → avatar |
+| `config.py` | Todas as configurações centralizadas |
+| `llm_client.py` | Interface com Ollama e LM Studio |
+| `tts_engine.py` | Síntese de voz (Kokoro, Edge-TTS, Qwen3) com fallback |
+| `audio_detector.py` | Captura de áudio, detecção de fala, wake word, STT (Whisper) |
+| `commands.py` | Execução de comandos locais com detecção inteligente de intenção |
+| `memory_manager.py` | Memória persistente v2 em markdown |
+| `system_info.py` | Consultas de informações do sistema |
+| `avatar.py` | Animação do avatar em Pygame |
+| `log.py` | Logging colorido com níveis |
+
+## 🔄 Fluxo do Sistema
 
 ```
-🎤 Microphone → Whisper (STT) → LLM (Ollama/LM Studio)
-   → TTS (Kokoro/Qwen3) → 🔊 Speaker + 👤 Avatar
+🎤 Microfone → Whisper (STT) → Detecção de Intenção
+                               ├── Comando Local → Confirmação → Execução
+                               ├── Pesquisa Web → LLM + Contexto
+                               ├── Info Sistema → LLM + Contexto
+                               └── Conversa → LLM
+→ TTS (Kokoro/Edge/Qwen3) → 🔊 Alto-falante + 👤 Avatar
 ```
 
-## 🎯 Usage Tips
+### Fluxo Detalhado:
+1. **Wake word** detecta ativação
+2. **Whisper** (`turbo`) transcreve áudio para texto
+3. **Detecção de intenção** classifica:
+   - Comando local? → Heurísticas + LLM verificam → pede confirmação → executa
+   - Pesquisa web? → `search_web()` → injeta resultados no contexto
+   - Info sistema? → `system_info.py` → injeta dados no contexto
+   - Conversa geral? → Envia direto para o LLM
+4. **LLM** (LM Studio / Ollama) gera resposta
+5. **TTS** converte resposta em áudio
+6. **Avatar** anima sincronizado com o áudio
 
-1. Speak clearly in a quiet environment
-2. Wait for the audio response before speaking again
-3. Say "calado" to interrupt speech at any time
-4. Avatar helps visualize when the assistant is speaking
-5. Avatar can be disabled with `AVATAR_ENABLE = False` to save memory
+## 🎯 Dicas de Uso
 
-## 🍓 Raspberry Pi 4
+1. Fale claramente em um ambiente silencioso
+2. Aguarde a resposta em áudio antes de falar de novo
+3. Diga **"calado"** para interromper a fala a qualquer momento
+4. O avatar ajuda a visualizar quando a assistente está falando
+5. Para economizar memória: `AVATAR_ENABLE = False` em `config.py`
+6. O Whisper `turbo` oferece o melhor custo-benefício entre precisão e velocidade
+7. **STT automático**: No Mac, usa whisper original com GPU (MPS). No SBC/ARM, usa faster-whisper com CTranslate2 (int8). Tudo automático via `STT_BACKEND='auto'`
+8. Os modelos ficam em cache:
+   - Whisper original: `~/.cache/whisper/` (~2.2 GB para o `turbo`)
+   - faster-whisper: `~/.cache/huggingface/hub/` (mesmo modelo, formato CTranslate2)
 
-Recommendations for running on Raspberry Pi 4:
-- Use Whisper `tiny`: `WHISPER_MODEL = 'tiny'`
-- Disable avatar: `AVATAR_ENABLE = False`
-- Use Ollama with small models (qwen3:0.6b, llama3.2:1b)
-- Disable thinking: `THINKING_ENABLED = False`
-- Use LM Studio with models under 3B parameters
+## 🍓 Raspberry Pi / Orange Pi (SBC)
 
-## 🤝 Contributing
+Recomendações para rodar em SBCs ARM:
+- O **faster-whisper** é selecionado automaticamente (MPS não disponível) — 4x mais rápido que whisper original em CPU
+- Use Whisper `tiny` se a RAM for limitada: `WHISPER_MODEL = 'tiny'`
+- No Orange Pi 5, considere `WHISPER_MODEL = 'turbo'` (CTranslate2 é otimizado para ARM64)
 
-To report issues or suggest improvements:
-1. Check if the issue has already been reported
-2. Include system information
-3. Describe steps to reproduce
-4. Include full error messages
+## 🛠️ Comandos Suportados (Sistema)
+
+Tabela completa de aplicativos que podem ser abertos por voz:
+
+| Fala | Ação (macOS) |
+|------|-------------|
+| "navegador" / "browser" | Safari |
+| "chrome" | Google Chrome |
+| "firefox" | Firefox |
+| "safari" | Safari |
+| "edge" | Microsoft Edge |
+| "brave" | Brave Browser |
+| "terminal" / "prompt" | Terminal |
+| "vscode" / "vs code" | Visual Studio Code |
+| "cursor" | Cursor |
+| "spotify" | Spotify |
+| "vlc" | VLC |
+| "calculadora" | Calculator |
+| "calendário" | Calendar |
+| "notas" | Notes |
+| "lembretes" | Reminders |
+| "discord" | Discord |
+| "telegram" | Telegram |
+| "whatsapp" | WhatsApp |
+| "notion" | Notion |
+| "obsidian" | Obsidian |
+| "finder" / "explorer" / "arquivos" | Finder |
+
+## 🤝 Contribuindo
+
+Para reportar problemas ou sugerir melhorias:
+1. Verifique se o problema já foi reportado
+2. Inclua informações do sistema
+3. Descreva passos para reproduzir
+4. Inclua mensagens de erro completas

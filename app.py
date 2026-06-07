@@ -1,3 +1,4 @@
+from faster_whisper import WhisperModel
 import whisper
 import torch
 from kokoro import KPipeline
@@ -13,6 +14,15 @@ import wave
 from collections import deque
 from colorama import init, Fore, Style
 import signal
+
+# Corrigir SSL no macOS (evita [SSL: CERTIFICATE_VERIFY_FAILED])
+import ssl
+try:
+    _create_unverified = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified
 import sys
 import re
 import warnings
@@ -35,6 +45,12 @@ from commands import CommandExecutor
 
 # Memória persistente
 from memory_manager import MemoryManager
+
+# Busca na web
+from web_search import search_web, needs_search, format_for_prompt, check_internet
+
+# Informações do sistema
+from system_info import detect_system_query, format_for_prompt as fmt_sysinfo
 
 # Logging colorido
 from log import logger
@@ -144,18 +160,22 @@ class ChicaAssistant:
         
         # Opção de seleção de sistema TTS
         print(Fore.CYAN + "🎤 SELECIONE O SISTEMA TTS:")
-        print(Fore.CYAN + "   1. Kokoro-TTS (padrão)")
-        print(Fore.CYAN + "   2. Qwen3-TTS (voz Serena em português)")
-        print(Fore.CYAN + "   3. Usar configuração atual do config.py")
+        print(Fore.CYAN + "   1. Kokoro-TTS (padrão, local)")
+        print(Fore.CYAN + "   2. Qwen3-TTS (voz Serena, local)")
+        print(Fore.CYAN + "   3. Edge-TTS (voz Thalita, online)")
+        print(Fore.CYAN + "   4. Usar configuração do config.py")
         
         try:
-            choice = input(Fore.YELLOW + "Escolha (1/2/3) [3]: ").strip()
+            choice = input(Fore.YELLOW + "Escolha (1/2/3/4) [4]: ").strip()
             if choice == "1":
                 self.tts_system_choice = 'kokoro'
                 print(Fore.GREEN + "✅ Sistema TTS selecionado: Kokoro-TTS")
             elif choice == "2":
                 self.tts_system_choice = 'qwen3'
                 print(Fore.GREEN + "✅ Sistema TTS selecionado: Qwen3-TTS (voz Serena)")
+            elif choice == "3":
+                self.tts_system_choice = 'edge'
+                print(Fore.GREEN + f"✅ Sistema TTS selecionado: Edge-TTS ({config.EDGE_TTS_VOICE})")
             else:
                 self.tts_system_choice = TTS_SYSTEM
                 print(Fore.GREEN + f"✅ Usando configuração do config.py: {TTS_SYSTEM}")
@@ -246,29 +266,7 @@ class ChicaAssistant:
         self.audio_device_id = self._get_audio_device_id()
         
         # Carregar modelos
-        # Modelos maiores que 'base' têm problemas conhecidos com MPS
-        models_with_mps_issues = ['small', 'medium', 'large', 'turbo']
-        
-        if WHISPER_MODEL in models_with_mps_issues and device == "mps":
-            print(Fore.YELLOW + f"⚠️  Modelo '{WHISPER_MODEL}' tem problemas conhecidos com MPS")
-            print(Fore.YELLOW + f"⚠️  Carregando em CPU para evitar erros de precisão...")
-            device = "cpu"
-        
-        try:
-            self.stt_model = whisper.load_model(WHISPER_MODEL, device=device)
-            print(Fore.GREEN + f"✅ Modelo Whisper '{WHISPER_MODEL}' carregado com sucesso em {device}")
-        except Exception as e:
-            # Se falhar, tentar com CPU
-            print(Fore.YELLOW + f"⚠️  Erro ao carregar modelo Whisper em {device}: {str(e)[:100]}...")
-            print(Fore.YELLOW + f"⚠️  Tentando carregar em CPU...")
-            try:
-                self.stt_model = whisper.load_model(WHISPER_MODEL, device="cpu")
-                print(Fore.GREEN + f"✅ Modelo Whisper '{WHISPER_MODEL}' carregado com sucesso em CPU")
-            except Exception as e2:
-                print(Fore.RED + f"❌ Erro crítico ao carregar modelo Whisper: {str(e2)[:100]}...")
-                print(Fore.RED + f"❌ Tentando carregar modelo 'tiny' como fallback...")
-                self.stt_model = whisper.load_model("tiny", device="cpu")
-                print(Fore.GREEN + f"✅ Modelo Whisper 'tiny' carregado como fallback em CPU")
+        self._init_stt()
         
         # Inicializar sistema TTS baseado na escolha do usuário
         self.tts_system = self.tts_system_choice
@@ -277,8 +275,14 @@ class ChicaAssistant:
         
         if self.tts_system == 'kokoro':
             print(Fore.GREEN + "🔊 Inicializando sistema TTS Kokoro...")
-            self.tts_pipeline = KPipeline(lang_code='p', repo_id='hexgrad/Kokoro-82M')
+            self.tts_pipeline = KPipeline(lang_code=config.TTS_KOKORO_LANG, repo_id=config.TTS_KOKORO_MODEL)
             print(Fore.GREEN + "✅ Sistema TTS Kokoro inicializado com sucesso")
+        elif self.tts_system == 'edge':
+            print(Fore.GREEN + "🔊 Inicializando sistema TTS Edge...")
+            self.edge_tts = TTSManager(system='edge')
+            # Se o fallback ocorreu (sem internet), tts_engine troca pra kokoro
+            actual = getattr(self.edge_tts, 'system', 'edge')
+            print(Fore.GREEN + f"✅ Sistema TTS ativo: {actual}")
         else:
             self._init_qwen3_tts()
 
@@ -343,11 +347,10 @@ class ChicaAssistant:
         self.command_executor = CommandExecutor()
         self.waiting_confirmation = None  # None ou dict do comando pendente
 
-        # Memória persistente
-        mem_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chica_memory.json')
-        self.memory = MemoryManager(mem_path)
-        self._conversation_count = 0  # Para rate-limited memory extraction
-        self.stop_phrases = ["calado", "calada", "silêncio", "silencio"]  # Apenas comandos explícitos de interrupção
+        # Memória persistente (2 arquivos: assistant_memory.md + assistant_user.md)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.memory = MemoryManager(base_dir)
+        self.stop_phrases = config.STOP_PHRASES  # Palavras de interrupção
         
         # Cache para frases curtas frequentes (melhora performance do Qwen3-TTS)
         self.tts_cache = {}
@@ -356,6 +359,65 @@ class ChicaAssistant:
         
         # Configurar handler para CTRL+C
         signal.signal(signal.SIGINT, self.signal_handler)
+
+    def _init_stt(self) -> None:
+        """Inicializa o STT (Speech-to-Text) com detecção automática de hardware.
+
+        No Mac Apple Silicon → whisper original com MPS (GPU, mais rápido).
+        No ARM/SBC/CPU → faster-whisper com CTranslate2 (otimizado para CPU).
+        """
+        # Mapear nome do modelo para o HuggingFace ID do faster-whisper
+        hf_name = "large-v3-turbo" if config.WHISPER_MODEL == "turbo" else config.WHISPER_MODEL
+
+        # Detectar hardware e escolher backend
+        has_mps = torch.backends.mps.is_available()
+        backend = config.STT_BACKEND
+
+        if backend == 'auto':
+            if has_mps:
+                backend = 'whisper'
+            else:
+                backend = 'faster-whisper'
+
+        print(Fore.CYAN + f"🎤 STT: {backend} ({config.WHISPER_MODEL})")
+
+        if backend == 'whisper':
+            # Whisper original com PyTorch — usa MPS no Mac
+            device = "mps" if has_mps else "cpu"
+            try:
+                self.stt_model = whisper.load_model(config.WHISPER_MODEL, device=device)
+                print(Fore.GREEN + f"✅ Whisper '{config.WHISPER_MODEL}' carregado ({device})")
+            except Exception as e:
+                print(Fore.YELLOW + f"⚠️  Erro: {str(e)[:80]}...")
+                print(Fore.YELLOW + f"⚠️  Tentando CPU...")
+                try:
+                    self.stt_model = whisper.load_model(config.WHISPER_MODEL, device="cpu")
+                    print(Fore.GREEN + f"✅ Whisper '{config.WHISPER_MODEL}' carregado (CPU)")
+                except Exception:
+                    print(Fore.YELLOW + f"⚠️  Tentando 'tiny' como fallback...")
+                    self.stt_model = whisper.load_model("tiny", device="cpu")
+                    print(Fore.GREEN + f"✅ Whisper 'tiny' carregado (CPU fallback)")
+        else:
+            # faster-whisper com CTranslate2 — melhor em CPU/ARM
+            try:
+                self.stt_model = WhisperModel(
+                    hf_name,
+                    device="cpu",
+                    compute_type="int8",
+                    cpu_threads=4,
+                    num_workers=2,
+                )
+                print(Fore.GREEN + f"✅ faster-whisper '{config.WHISPER_MODEL}' carregado (cpu, int8)")
+            except Exception as e:
+                print(Fore.YELLOW + f"⚠️  Erro faster-whisper: {str(e)[:80]}...")
+                print(Fore.YELLOW + f"⚠️  Tentando 'tiny' como fallback...")
+                try:
+                    self.stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+                    print(Fore.GREEN + f"✅ faster-whisper 'tiny' carregado (fallback)")
+                except Exception as e2:
+                    print(Fore.RED + f"❌ Erro crítico: {str(e2)[:80]}...")
+                    print(Fore.RED + "❌ Instale: pip install faster-whisper")
+                    sys.exit(1)
 
     def _init_qwen3_tts(self) -> None:
         """Inicializa o TTS Qwen3 com fallback automático para Kokoro."""
@@ -433,7 +495,7 @@ class ChicaAssistant:
         """Fallback para Kokoro-TTS quando Qwen3 falha."""
         print(Fore.YELLOW + "⚠️  Usando Kokoro-TTS como fallback...")
         self.tts_system = 'kokoro'
-        self.tts_pipeline = KPipeline(lang_code='p', repo_id='hexgrad/Kokoro-82M')
+        self.tts_pipeline = KPipeline(lang_code=config.TTS_KOKORO_LANG, repo_id=config.TTS_KOKORO_MODEL)
         print(Fore.GREEN + "✅ Sistema TTS Kokoro inicializado como fallback")
 
     def _get_audio_device_id(self):
@@ -774,14 +836,15 @@ class ChicaAssistant:
         """Verifica se o texto contém um comando para parar"""
         text_lower = text.lower().strip()
         
+        # Busca por palavra inteira (evita "para" em "parabéns")
         for phrase in self.stop_phrases:
-            if phrase in text_lower:
+            if re.search(r'\b' + re.escape(phrase) + r'\b', text_lower):
                 return True
         
         # Verificar padrões como "Chica, para" ou "Chica pare"
         words = text_lower.split()
         if len(words) >= 2:
-            if ASSISTANT_NAME.lower() in words[0] and words[1] in ["calado", "calada", "silêncio"]:
+            if ASSISTANT_NAME.lower() in words[0] and words[1] in self.stop_phrases:
                 return True
         
         return False
@@ -827,28 +890,22 @@ class ChicaAssistant:
                 self.play_audio_with_interruption(audio_file)
 
     def _extract_memory(self, user_text: str, ai_reply: str) -> None:
-        """Extrai fatos importantes da conversa e salva na memória.
+        """Extrai fatos da conversa via LLM e aplica nos arquivos de memória.
 
-        Executa a cada 5 interações para não impactar performance.
-        Usa uma chamada LLM leve e curta.
+        Executa a cada 3 interações para não impactar muito a performance.
         """
         try:
-            prompt = (
-                'Extraia informações importantes sobre o usuário desta conversa. '
-                'Retorne uma frase curta (máx 15 palavras) ou "NONE" se nada relevante. '
-                'Armazene apenas fatos úteis para conversas futuras '
-                '(nome, preferências, informações pessoais relevantes).'
-            )
+            prompt = self.memory.get_extraction_prompt()
             resp = self.llm.chat([
                 {'role': 'system', 'content': prompt},
                 {'role': 'user', 'content': user_text},
                 {'role': 'assistant', 'content': ai_reply},
             ])
-            fact = resp.message.content.strip()
-            if fact and fact.upper() != 'NONE':
-                self.memory.add(fact)
+            extraction = resp.message.content.strip()
+            if extraction and extraction.upper() != 'NONE':
+                self.memory.apply_extraction(extraction)
         except Exception as e:
-            logger.warning(f"Erro na extração de memória: {e}")
+            logger.warning(f'Erro na extração de memória: {e}')
 
     def signal_handler(self, sig, frame):
         """Handler para CTRL+C"""
@@ -929,7 +986,28 @@ class ChicaAssistant:
         self.inactivity_counter = INACTIVITY_TIMEOUT
         self.last_activity_time = time.time()
     
-    def audio_callback(self, indata, frames, time_info, status):
+    def _transcribe_audio(self, audio_path: str) -> str:
+        """Transcreve áudio usando o backend correto (whisper ou faster-whisper).
+
+        faster-whisper retorna generator de segments; whisper original retorna dict.
+        """
+        try:
+            if hasattr(self.stt_model, 'transcribe') and hasattr(self.stt_model, 'model'):  # WhisperModel
+                segments, _info = self.stt_model.transcribe(
+                    audio_path,
+                    language=config.WHISPER_LANGUAGE,
+                    beam_size=3,
+                    vad_filter=True,
+                )
+                return " ".join(seg.text for seg in segments).strip()
+            else:  # whisper.Whisper
+                result = self.stt_model.transcribe(audio_path, language=config.WHISPER_LANGUAGE)
+                return result["text"].strip()
+        except Exception as e:
+            logger.error(f"Erro na transcrição: {e}")
+            return ""
+
+    def _check_interruption(self, indata, frames, time_info, status):
         """Callback para processamento de áudio em tempo real"""
         if status:
             return
@@ -1069,11 +1147,20 @@ class ChicaAssistant:
 
             interruption_data = np.concatenate(recent, axis=0)
 
+            # Se a IA está falando, verificar volume para evitar eco
+            # (o microfone capta a própria voz da Chica no autofalante)
+            if self.is_speaking_tts:
+                rms = float(np.sqrt(np.mean(interruption_data ** 2)))
+                # Só transcrever se o áudio for significativamente mais alto
+                # que o limiar de fala (usuário falando por cima do eco)
+                if rms < config.SPEECH_THRESHOLD * 2.5:
+                    self.interruption_buffer.clear()
+                    return False
+
             temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
             sf.write(temp_file.name, interruption_data, SAMPLE_RATE)
 
-            result = self.stt_model.transcribe(temp_file.name, language="pt")
-            user_text = result["text"].strip().lower()
+            user_text = self._transcribe_audio(temp_file.name).lower()
 
             try:
                 os.unlink(temp_file.name)
@@ -1101,8 +1188,7 @@ class ChicaAssistant:
         start_time = time.time()
         
         # 1. Transcrever áudio
-        result = self.stt_model.transcribe(audio_path, language="pt")
-        user_text = result["text"].strip()
+        user_text = self._transcribe_audio(audio_path)
         
         if not user_text:
             return
@@ -1131,12 +1217,7 @@ class ChicaAssistant:
             else:
                 return
         
-        # 3. Verificar se é comando de parar
-        if self.check_for_stop_command(user_text):
-            print(Fore.YELLOW + f"\n⏸️  Comando de parar detectado")
-            return
-
-        # 3.5 Verificar se estamos aguardando confirmação de comando
+        # 3. Verificar se estamos aguardando confirmação de comando
         if self.waiting_confirmation is not None:
             self._handle_confirmation_response(user_text)
             return
@@ -1144,8 +1225,69 @@ class ChicaAssistant:
         # 3.6 Detectar comandos locais (abrir navegador, etc.)
         cmd = self.command_executor.parse(user_text)
         if cmd:
-            self._ask_command_confirmation(cmd)
-            return
+            # Comando explícito (ex: "abra o navegador") → executa direto
+            if cmd.get("match_type") == "explicit":
+                self._ask_command_confirmation(cmd)
+                return
+
+            # Comando implícito (ex: "calendário" sozinho) → verifica intenção com LLM
+            # para evitar falso positivo (ex: "calendário dos jogos" não abre o Calendar)
+            intent_prompt = (
+                f"O usuário disse: \"{user_text}\". "
+                f"O sistema detectou um possível comando: '{cmd['chave']}'. "
+                f"Responda APENAS 'COMANDO' se o usuário QUER ABRIR o aplicativo {cmd['chave']}, "
+                f"ou 'PERGUNTA' se o usuário está PEDINDO INFORMAÇÕES.\n"
+                f"Exemplos:\n"
+                f"- 'calendário' → COMANDO\n"
+                f"- 'calendário dos jogos' → PERGUNTA\n"
+                f"- 'navegador' → COMANDO\n"
+                f"- 'pesquisar no navegador' → PERGUNTA\n"
+                f"Responda apenas COMANDO ou PERGUNTA."
+            )
+            try:
+                intent_resp = self.llm.chat([
+                    {'role': 'system', 'content': 'Classifique a intenção do usuário. Responda apenas COMANDO ou PERGUNTA.'},
+                    {'role': 'user', 'content': intent_prompt},
+                ])
+                intent_text = self.extract_ai_response(intent_resp).strip().upper()
+                is_command = 'COMANDO' in intent_text and 'PERGUNTA' not in intent_text
+            except Exception:
+                is_command = True  # Em caso de erro, mantém o comando (comportamento seguro)
+
+            if is_command:
+                self._ask_command_confirmation(cmd)
+                return
+            else:
+                logger.info(f'🧠 LLM reclassificou como PERGUNTA (não comando): {user_text[:60]}')
+                # Cai no fluxo normal (pesquisa web + LLM)
+
+        # 3.7 Detectar consultas sobre o sistema (disco, RAM, CPU, etc.)
+        sys_info_text = ""
+        system_query = detect_system_query(user_text)
+        if system_query:
+            logger.info(f'🖥️ Consulta de sistema: {system_query.name}')
+            print(Fore.CYAN + f'📊 Obtendo informações: {system_query.name}...')
+            output = system_query.execute()
+            if output:
+                sys_info_text = fmt_sysinfo(system_query.name, output)
+                print(Fore.GREEN + f'   ✅ {len(output)} caracteres obtidos')
+
+        # 3.8 Detectar necessidade de pesquisa na web (se não for consulta de sistema)
+        search_results = ""
+        search_offline = False
+        if not system_query and needs_search(user_text):
+            logger.info(f'🔍 Intenção de busca detectada: {user_text[:80]}')
+            if not check_internet():
+                search_offline = True
+                print(Fore.YELLOW + '⚠️  Sem acesso à internet — vou responder com meu conhecimento')
+            else:
+                print(Fore.CYAN + '🔍 Pesquisando na web...')
+                search_results = search_web(user_text)
+                if search_results:
+                    result_count = search_results.count('\n1. ')
+                    print(Fore.CYAN + f'   → {result_count} resultado(s) encontrado(s)')
+                else:
+                    print(Fore.YELLOW + '   → Nenhum resultado encontrado')
 
         # 4. Se estiver ativa, processar normalmente
         # Incluir memórias persistentes no system prompt
@@ -1163,6 +1305,23 @@ class ChicaAssistant:
         # Histórico recente (limitado para melhor performance)
         for msg in self.conversation_history[-3:]:  # Reduzido de 4 para 3
             messages.append(msg)
+        
+        # Injetar informações do sistema (se houver)
+        if sys_info_text:
+            messages.append({'role': 'system', 'content': sys_info_text})
+        
+        # Injetar contexto de pesquisa na web
+        if search_offline:
+            messages.append({'role': 'system', 'content': (
+                '\n\n⚠️ OBSERVAÇÃO IMPORTANTE: Sem acesso à internet no momento. '
+                'Use seu conhecimento para responder à pergunta do usuário. '
+                'Se você não souber a resposta, avise educadamente que está sem conexão '
+                'e que não pode pesquisar agora, oferecendo ajuda com outro assunto.'
+            )})
+        elif search_results:
+            search_context = format_for_prompt(search_results)
+            if search_context:
+                messages.append({'role': 'system', 'content': search_context})
         
         messages.append({'role': 'user', 'content': user_text})
         
@@ -1224,16 +1383,19 @@ class ChicaAssistant:
         # 8. Atualizar contador de inatividade após resposta
         self.reset_inactivity_counter()
 
-        # 9. Extrair memórias periodicamente (a cada 5 interações)
-        self._conversation_count += 1
-        if self._conversation_count % 5 == 0:
-            self._extract_memory(user_text, ai_reply)
+        # 9. Extrair memória: imediata (padrões) + LLM (toda interação)
+        self.memory.extract_immediate(user_text)
+        self._extract_memory(user_text, ai_reply)
 
     def text_to_speech(self, text):
         """Converte texto para áudio"""
         if not text:
             return None
-        
+
+        # Edge-TTS: usa o TTSManager (async, internet, fallback automático)
+        if self.tts_system == 'edge' and hasattr(self, 'edge_tts'):
+            return self.edge_tts.synthesize(text)
+
         try:
             # Dividir texto em frases menores para processamento mais rápido
             sentences = re.split(r'[.!?]+', text)
@@ -1561,7 +1723,7 @@ class ChicaAssistant:
             'channels': CHANNELS,
             'dtype': 'float32',
             'blocksize': CHUNK,
-            'callback': self.audio_callback
+            'callback': self._check_interruption
         }
         
         # Adicionar dispositivo se especificado

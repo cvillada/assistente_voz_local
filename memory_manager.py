@@ -1,41 +1,107 @@
 #!/usr/bin/env python3
 """
-Gerenciador de memória persistente para a assistente Chica.
+Gerenciador de memória para a assistente Chica.
 
-Armazena fatos importantes sobre o usuário em um arquivo JSON.
-As memórias são injetadas no system prompt para dar contexto
-às conversas futuras.
-
-Leve o suficiente para Raspberry Pi 4 — sem banco de dados,
-sem embeddings, sem busca vetorial.
+Implementa o mesmo padrão do Hermes Agent:
+  - Dois arquivos: assistant_memory.md e assistant_user.md
+  - Entradas separadas por § (section sign)
+  - Limites de caracteres com % de uso visível
+  - Injeção no system prompt como snapshot congelado
 
 Uso:
     from memory_manager import MemoryManager
-
-    mem = MemoryManager("memories.json")
-    mem.add("Usuário se chama Claudinei")
-    mem.add("Usuário prefere respostas curtas")
+    mem = MemoryManager('.')
+    mem.add('user', 'Nome do usuário: Claudinei')
     ctx = mem.get_context()
-    # ctx -> "📝 Memórias: Usuário se chama Claudinei | Usuário prefere respostas curtas"
 """
 
 from __future__ import annotations
 
-import json
 import os
+import re
 import time
 from typing import Optional
 
+import config
 from log import logger
 
 
 # ---------------------------------------------------------------------------
-# Constantes
+# Padrões de detecção imediata (regex)
 # ---------------------------------------------------------------------------
 
-MAX_MEMORIES = 100          # Máximo de memórias armazenadas
-MAX_AGE_DAYS = 30          # Máximo de dias antes de expirar
-MAX_FACT_LENGTH = 120      # Máximo de caracteres por fato
+PATTERNS: list[tuple[re.Pattern, str, str]] = [
+    # ── Nome ──
+    (re.compile(r'(?:meu\s*nome\s*[ée]\s*(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Nome do usuário: {match}'),
+    (re.compile(r'(?:eu\s*me\s*chamo\s*(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Nome do usuário: {match}'),
+    (re.compile(r'(?:pode\s*me\s*chamar\s*de\s*(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Nome do usuário: {match}'),
+    (re.compile(r'(?:me\s*chamo\s*(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Nome do usuário: {match}'),
+
+    # ── Idade ──
+    (re.compile(r'(?:tenho\s*|idade\s*de\s*|com\s*)(\d+)\s*anos', re.I),
+     'user', 'Idade do usuário: {match} anos'),
+
+    # ── Gostos / Preferências ──
+    (re.compile(r'(?:gost[oa]\s*(?:de|muito|mais)?\s*(.+?))(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário gosta de {match}'),
+    (re.compile(r'(?:ador[oa]\s*(.+?))(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário adora {match}'),
+    (re.compile(r'(?:prefir[eo]\s*(.+?))(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário prefere {match}'),
+    (re.compile(r'(?:não\s*gost[oa]\s*(?:de)?\s*(.+?))(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário não gosta de {match}'),
+    (re.compile(r'(?:odet[eo]\s*(.+?))(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário odeia {match}'),
+    (re.compile(r'(?:curt[io]\s*(?:de|muito)?\s*(.+?))(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário curte {match}'),
+
+    # ── Profissão / Estado civil ──
+    (re.compile(r'(?:sou\s+(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Usuário é {match}'),
+    (re.compile(r'(?:trabalh[oa]\s*(?:como|em|na|no|com)?\s*(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Usuário trabalha com {match}'),
+    (re.compile(r'(?:estudo\s*(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Usuário estuda {match}'),
+
+    # ── Localização ──
+    (re.compile(r'(?:moro\s*(?:em|no|na)?\s*(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Usuário mora em {match}'),
+    (re.compile(r'(?:sou\s*de\s*(.+?))(?:[.!?;]|$)', re.I),
+     'user', 'Usuário é de {match}'),
+
+    # ── Tecnologia / Dispositivos ──
+    (re.compile(r'(?:us[oa]\s*(.+?))(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário usa {match}'),
+    (re.compile(r'(?:tenho\s+um\s+(.+?))(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário tem um {match}'),
+
+    # ── Hobbies ──
+    (re.compile(r'\btoco\s*(.+?)(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário toca {match}'),
+    (re.compile(r'\bjog[oa]\b\s*(?:de)?\s*(.+?)(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário joga {match}'),
+    (re.compile(r'\bassist[eo]\s*(.+?)(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário assiste {match}'),
+    (re.compile(r'\bleio\b.*?(.+?)(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário lê {match}'),
+
+    # ── Sentimentos ──
+    (re.compile(r'\bach[oa]\s*(.+?)(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário acha {match}'),
+    (re.compile(r'\bpens[oa]\s*(.+?)(?:[.!?;]|$)', re.I),
+     'memory', 'Usuário pensa {match}'),
+]
+
+
+# ---------------------------------------------------------------------------
+# Seção § (delimitador de entradas, igual ao Hermes)
+# ---------------------------------------------------------------------------
+
+_SECTION = '\n§\n'
 
 
 # ---------------------------------------------------------------------------
@@ -43,144 +109,325 @@ MAX_FACT_LENGTH = 120      # Máximo de caracteres por fato
 # ---------------------------------------------------------------------------
 
 class MemoryManager:
-    """Gerencia memórias persistentes em arquivo JSON."""
+    """Gerencia memórias em dois arquivos markdown (padrão Hermes).
 
-    def __init__(self, filepath: str) -> None:
-        self.filepath: str = os.path.abspath(filepath)
-        self._memories: list[dict] = []
-        self._load()
+    Args:
+        base_dir: Diretório onde os arquivos são salvos.
+    """
+
+    def __init__(self, base_dir: str) -> None:
+        self.base_dir: str = os.path.abspath(base_dir)
+        self.memory_path: str = os.path.join(self.base_dir, 'assistant_memory.md')
+        self.user_path: str = os.path.join(self.base_dir, 'assistant_user.md')
+
+        self._memory_entries: list[str] = self._load_entries(self.memory_path)
+        self._user_entries: list[str] = self._load_entries(self.user_path)
 
     # ------------------------------------------------------------------
-    # Persistência
+    # Arquivos — entradas separadas por §
     # ------------------------------------------------------------------
 
-    def _load(self) -> None:
-        """Carrega memórias do arquivo JSON."""
-        if not os.path.exists(self.filepath):
-            self._memories = []
-            logger.info("Arquivo de memória não encontrado. Iniciando vazio.")
-            return
-        try:
-            with open(self.filepath, 'r') as f:
-                data = json.load(f)
-            self._memories = data if isinstance(data, list) else []
-            # Limpar memórias expiradas
-            self._prune_expired()
-            logger.success(f"{len(self._memories)} memórias carregadas")
-        except (json.JSONDecodeError, IOError) as e:
-            logger.warning(f"Erro ao carregar memórias: {e}. Iniciando vazio.")
-            self._memories = []
+    @staticmethod
+    def _load_entries(path: str) -> list[str]:
+        """Carrega entradas do arquivo (separadas por § ou linhas com -).
 
-    def save(self) -> None:
-        """Salva memórias no arquivo JSON."""
+        Compatível com os formatos novo (§) e antigo (-).
+        """
+        if not os.path.exists(path):
+            return []
         try:
-            os.makedirs(os.path.dirname(self.filepath) or '.', exist_ok=True)
-            with open(self.filepath, 'w') as f:
-                json.dump(self._memories, f, indent=2, ensure_ascii=False)
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Tentar separar por § primeiro
+            if '§' in content:
+                entries = []
+                for part in content.split('§'):
+                    part = part.strip()
+                    # Ignorar cabeçalhos e linhas vazias
+                    if part and not part.startswith('# ') and not part.startswith('#'):
+                        entries.append(part)
+                return entries
+
+            # Fallback: formato antigo (linhas com - )
+            entries = []
+            for line in content.split('\n'):
+                stripped = line.strip()
+                if stripped.startswith('- '):
+                    entries.append(stripped[2:].strip())
+            return entries
+
+        except IOError:
+            return []
+
+    def _save_file(self, path: str, entries: list[str], header_block: str) -> None:
+        """Salva entradas com formato Hermes: cabeçalho + entradas § separadas.
+
+        Args:
+            path: Caminho do arquivo.
+            entries: Lista de entradas de texto.
+            header_block: Cabeçalho do arquivo (pode ter múltiplas linhas).
+        """
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        try:
+            # Aplicar limite de caracteres do config.py
+            max_chars = self._get_char_limit(path)
+            entries = self._trim_to_limit(entries, max_chars)
+
+            # Montar conteúdo: cabeçalho + entradas separadas por §
+            parts = [header_block, '']
+            if entries:
+                parts.append(_SECTION.join(entries))
+                parts.append('')
+
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(parts))
         except IOError as e:
-            logger.warning(f"Erro ao salvar memórias: {e}")
+            logger.warning(f'Erro ao salvar {path}: {e}')
+
+    def _get_char_limit(self, path: str) -> int:
+        """Retorna o limite de caracteres para o arquivo."""
+        if path == self.user_path:
+            return config.MEMORY_USER_CHAR_LIMIT
+        return config.MEMORY_CHAR_LIMIT
+
+    @staticmethod
+    def _trim_to_limit(entries: list[str], max_chars: int) -> list[str]:
+        """Remove entradas mais antigas até caber no limite."""
+        total = sum(len(e) for e in entries)
+        while entries and total > max_chars:
+            removed = entries.pop(0)
+            total -= len(removed)
+        return entries
+
+    def _total_chars(self, path: str) -> int:
+        """Soma de caracteres de todas as entradas de um arquivo."""
+        entries = self._memory_entries if path == self.memory_path else self._user_entries
+        return sum(len(e) for e in entries)
+
+    def _usage_pct(self, path: str) -> tuple[int, int, float]:
+        """(usados, limite, porcentagem)."""
+        used = self._total_chars(path)
+        limit = self._get_char_limit(path)
+        pct = (used / limit * 100) if limit > 0 else 0
+        return (used, limit, pct)
+
+    def save_all(self) -> None:
+        """Salva ambos os arquivos."""
+        self._save_file(
+            self.memory_path, self._memory_entries,
+            '# 🧠 Memórias da Chica\n\nAnotações e observações sobre conversas com o usuário.'
+        )
+        self._save_file(
+            self.user_path, self._user_entries,
+            '# 👤 Perfil do Usuário\n\nInformações conhecidas sobre o usuário.'
+        )
 
     # ------------------------------------------------------------------
-    # CRUD
+    # CRUD (igual ao Hermes: add, remove)
     # ------------------------------------------------------------------
 
-    def add(self, fact: str) -> None:
+    def add(self, target: str, fact: str) -> bool:
         """Adiciona um fato à memória.
 
-        Remove duplicatas (pelo texto) e mantém o máximo de MAX_MEMORIES.
+        Args:
+            target: 'user' ou 'memory'.
+            fact: Texto do fato.
+
+        Returns:
+            True se adicionou, False se já existia.
         """
         fact = fact.strip()
-        if not fact or len(fact) > MAX_FACT_LENGTH:
-            return
+        if not fact or len(fact) > 200:
+            return False
 
-        # Remover duplicata se existir (atualiza timestamp)
-        for m in self._memories:
-            if m['text'].lower() == fact.lower():
-                m['timestamp'] = time.time()
-                m['access_count'] = m.get('access_count', 0) + 1
-                self.save()
-                return
+        entries = self._user_entries if target == 'user' else self._memory_entries
+        path = self.user_path if target == 'user' else self.memory_path
 
-        # Adicionar nova
-        self._memories.append({
-            'text': fact,
-            'timestamp': time.time(),
-            'access_count': 1,
-        })
+        # Evitar duplicatas (case-insensitive)
+        fact_lower = fact.lower()
+        for existing in entries:
+            if existing.lower() == fact_lower:
+                return False
 
-        # Podar se excedeu o limite
-        self._prune()
-        self.save()
-        logger.info(f"🧠 Memória salva: {fact[:60]}...")
+        # Verificar limite antes de adicionar
+        if self._total_chars(path) + len(fact) > self._get_char_limit(path):
+            # Remover a entrada mais antiga pra abrir espaço
+            if entries:
+                removed = entries.pop(0)
+                logger.info(f'🗑️ Memória removida por limite: {removed[:60]}...')
 
-    def remove(self, text: str) -> None:
-        """Remove uma memória pelo texto (busca parcial)."""
-        before = len(self._memories)
-        self._memories = [
-            m for m in self._memories
-            if text.lower() not in m['text'].lower()
-        ]
-        if len(self._memories) < before:
-            self.save()
-            logger.info(f"🗑️ Memória removida: {text[:60]}...")
+        entries.append(fact)
+        self.save_all()
+        logger.info(f'🧠 Memória salva: {fact[:80]}...')
+        return True
 
-    def clear(self) -> None:
-        """Limpa todas as memórias."""
-        self._memories = []
-        self.save()
-        logger.info("🧹 Todas as memórias foram limpas")
+    def remove(self, target: str, text: str) -> bool:
+        """Remove uma entrada por substring.
+
+        Args:
+            target: 'user' ou 'memory'.
+            text: Substring para buscar.
+
+        Returns:
+            True se removeu.
+        """
+        entries = self._user_entries if target == 'user' else self._memory_entries
+        before = len(entries)
+        text_lower = text.lower()
+        entries[:] = [e for e in entries if text_lower not in e.lower()]
+        if len(entries) < before:
+            self.save_all()
+            return True
+        return False
+
+    def clear(self, target: Optional[str] = None) -> None:
+        """Limpa memórias.
+
+        Args:
+            target: 'user', 'memory' ou None (limpa ambos).
+        """
+        if target in (None, 'memory'):
+            self._memory_entries = []
+        if target in (None, 'user'):
+            self._user_entries = []
+        self.save_all()
+        logger.info('🧹 Memórias limpas')
 
     # ------------------------------------------------------------------
-    # Contexto para o LLM
+    # Detecção imediata (regex)
+    # ------------------------------------------------------------------
+
+    def extract_immediate(self, user_text: str) -> bool:
+        """Detecta padrões no texto do usuário e salva imediatamente.
+
+        Returns:
+            True se alguma memória foi extraída.
+        """
+        text_lower = user_text.strip()
+        found = False
+
+        for pattern, target, template in PATTERNS:
+            m = pattern.search(text_lower)
+            if m:
+                match_text = m.group(1).strip().title()
+                if match_text.isdigit():
+                    if len(match_text) < 1 or len(match_text) > 3:
+                        continue
+                elif len(match_text) < 3 or len(match_text) > 60:
+                    continue
+                fact = template.format(match=match_text)
+                if self.add(target, fact):
+                    found = True
+
+        return found
+
+    # ------------------------------------------------------------------
+    # Extração via LLM
+    # ------------------------------------------------------------------
+
+    def get_extraction_prompt(self) -> str:
+        """Retorna o prompt para extrair memórias."""
+        return (
+            'Analise a conversa abaixo e extraia FATOS IMPORTANTES sobre o usuário '
+            'que a assistente Chica deve lembrar para conversas futuras.\n\n'
+            'REGRAS:\n'
+            '- Retorne APENAS fatos, UM por linha, sem marcadores\n'
+            '- Separe em duas seções:\n'
+            '  PERFIL: nome, idade, profissão, onde mora, hobbies\n'
+            '  MEMORIA: preferências, coisas ditas, opiniões\n'
+            '- Se NADA for relevante, retorne apenas "NONE"\n'
+            '- NÃO invente — extraia SÓ o que foi dito'
+        )
+
+    def apply_extraction(self, extraction_text: str) -> None:
+        """Aplica resultado da extração LLM."""
+        if not extraction_text or extraction_text.strip().upper() == 'NONE':
+            return
+
+        section = None
+        added = 0
+
+        for line in extraction_text.split('\n'):
+            line = line.strip()
+            if line.upper().startswith('PERFIL'):
+                section = 'user'
+                continue
+            elif line.upper().startswith('MEMORIA'):
+                section = 'memory'
+                continue
+
+            if not line or line.startswith('#'):
+                continue
+
+            # Remover marcadores como - ou *
+            fact = line.lstrip('- *').strip()
+            if not fact or len(fact) > 200:
+                continue
+
+            if section and self.add(section, fact):
+                added += 1
+
+        if added > 0:
+            logger.info(f'🧠 {added} nova(s) memória(s) via LLM')
+
+    # ------------------------------------------------------------------
+    # Contexto para o system prompt (estilo Hermes)
     # ------------------------------------------------------------------
 
     def get_context(self) -> str:
-        """Retorna as memórias formatadas para injeção no system prompt.
+        """Retorna as memórias formatadas como snapshot congelado.
 
-        Retorna string vazia se não houver memórias.
-        Ordena por access_count (mais acessadas primeiro).
+        Formato Hermes:
+          ═══════════════════
+          MEMORY [67% — chars]
+          ═══════════════════
+          entrada 1
+          §
+          entrada 2
+
+        Retorna string vazia se não houver nada.
         """
-        if not self._memories:
-            return ""
+        parts = []
 
-        # Ordenar: mais acessadas primeiro, depois mais recentes
-        sorted_m = sorted(
-            self._memories,
-            key=lambda m: (m.get('access_count', 0), m.get('timestamp', 0)),
-            reverse=True,
-        )
+        if self._memory_entries:
+            used, limit, pct = self._usage_pct(self.memory_path)
+            header = f'MEMÓRIAS [% — {used}/{limit} chars]'
+            sep = '═' * max(len(header), 40)
+            block = [
+                sep,
+                header,
+                sep,
+                _SECTION.join(self._memory_entries),
+            ]
+            parts.append('\n'.join(block))
 
-        facts = [m['text'] for m in sorted_m[:MAX_MEMORIES]]
-        return "📝 Memórias sobre o usuário: " + " | ".join(facts)
+        if self._user_entries:
+            used, limit, pct = self._usage_pct(self.user_path)
+            header = f'PERFIL DO USUÁRIO [% — {used}/{limit} chars]'
+            sep = '═' * max(len(header), 40)
+            block = [
+                sep,
+                header,
+                sep,
+                _SECTION.join(self._user_entries),
+            ]
+            parts.append('\n'.join(block))
+
+        if not parts:
+            return ''
+
+        return '\n\n📝 INFORMAÇÕES SOBRE O USUÁRIO:\n' + '\n\n'.join(parts)
+
+    # ------------------------------------------------------------------
+    # Utilitários
+    # ------------------------------------------------------------------
 
     def count(self) -> int:
-        """Número de memórias atuais."""
-        return len(self._memories)
+        return len(self._memory_entries) + len(self._user_entries)
 
-    # ------------------------------------------------------------------
-    # Manutenção interna
-    # ------------------------------------------------------------------
-
-    def _prune(self) -> None:
-        """Remove o excesso de memórias (as menos acessadas/mais antigas)."""
-        if len(self._memories) <= MAX_MEMORIES:
-            return
-
-        # Ordenar: menos acessadas primeiro, depois mais antigas
-        self._memories.sort(
-            key=lambda m: (m.get('access_count', 0), m.get('timestamp', 0)),
-        )
-
-        # Remover as piores até caber
-        self._memories = self._memories[-MAX_MEMORIES:]
-
-    def _prune_expired(self) -> None:
-        """Remove memórias mais velhas que MAX_AGE_DAYS."""
-        cutoff = time.time() - (MAX_AGE_DAYS * 86400)
-        before = len(self._memories)
-        self._memories = [
-            m for m in self._memories
-            if m.get('timestamp', 0) > cutoff
-        ]
-        if len(self._memories) < before:
-            logger.info(f"🧹 {before - len(self._memories)} memórias expiradas removidas")
+    def filepaths(self) -> dict[str, str]:
+        return {
+            'memory': self.memory_path,
+            'user': self.user_path,
+        }

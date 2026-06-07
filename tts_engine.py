@@ -50,13 +50,15 @@ class TTSManager:
         """Inicializa o pipeline TTS conforme o sistema escolhido."""
         if self.system == 'kokoro':
             self._init_kokoro()
+        elif self.system == 'edge':
+            self._init_edge()
         else:
             self._init_qwen3()
 
     def _init_kokoro(self) -> None:
         """Inicializa Kokoro-TTS."""
         logger.info("Inicializando sistema TTS Kokoro...")
-        self.kokoro_pipeline = KPipeline(lang_code='p', repo_id='hexgrad/Kokoro-82M')
+        self.kokoro_pipeline = KPipeline(lang_code=config.TTS_KOKORO_LANG, repo_id=config.TTS_KOKORO_MODEL)
         logger.success("Sistema TTS Kokoro inicializado")
 
     def _init_qwen3(self) -> None:
@@ -109,6 +111,35 @@ class TTSManager:
                 logger.error("Não foi possível inicializar Qwen3-TTS")
                 self._fallback_to_kokoro()
 
+    def _init_edge(self) -> None:
+        """Inicializa Edge-TTS (verifica internet, fallback para Kokoro se offline)."""
+        logger.info("Inicializando Edge-TTS...")
+        try:
+            import edge_tts
+            logger.info(f"Edge-TTS disponível (voz: {config.EDGE_TTS_VOICE})")
+            # Verificar internet de forma genérica
+            import socket
+            hosts = [('1.1.1.1', 443), ('8.8.8.8', 443)]
+            online = False
+            for host, port in hosts:
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(2)
+                    s.connect((host, port))
+                    s.close()
+                    online = True
+                    break
+                except (socket.timeout, OSError):
+                    continue
+            if online:
+                logger.success("Edge-TTS inicializado (online)")
+            else:
+                logger.warning("Sem internet para Edge-TTS — fallback para Kokoro")
+                self._fallback_to_kokoro()
+        except ImportError:
+            logger.warning("edge-tts não instalado. Instale com: pip install edge-tts")
+            self._fallback_to_kokoro()
+
     def _maybe_compile(self) -> None:
         """Aplica torch.compile se configurado."""
         if config.QWEN3_USE_COMPILE and hasattr(torch, 'compile') and self.qwen3_pipeline:
@@ -141,7 +172,7 @@ class TTSManager:
         """Fallback para Kokoro quando Qwen3 falha."""
         logger.warning("Usando Kokoro-TTS como fallback...")
         self.system = 'kokoro'
-        self.kokoro_pipeline = KPipeline(lang_code='p', repo_id='hexgrad/Kokoro-82M')
+        self.kokoro_pipeline = KPipeline(lang_code=config.TTS_KOKORO_LANG, repo_id=config.TTS_KOKORO_MODEL)
         logger.success("Kokoro-TTS ativado como fallback")
 
     # ------------------------------------------------------------------
@@ -152,6 +183,10 @@ class TTSManager:
         """Converte texto em áudio e retorna o caminho do arquivo .wav."""
         if not text:
             return None
+
+        # Edge-TTS sintetiza o texto completo de uma vez (async)
+        if self.system == 'edge':
+            return self._edge_synthesize_full(text)
 
         try:
             sentences = re.split(r'[.!?]+', text)
@@ -189,10 +224,48 @@ class TTSManager:
             logger.error(f"Erro no TTS ({self.system}): {e}")
             return None
 
+    def _edge_synthesize_full(self, text: str) -> Optional[str]:
+        """Sintetiza o texto completo com Edge-TTS (async)."""
+        import asyncio
+        try:
+            import edge_tts
+            communicate = edge_tts.Communicate(
+                text,
+                config.EDGE_TTS_VOICE,
+                rate=f"{int((config.EDGE_TTS_SPEED - 1.0) * 100):+d}%"
+            )
+            temp_file = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+            temp_path = temp_file.name
+            temp_file.close()
+
+            # Executar a síntese async de forma síncrona
+            asyncio.run(communicate.save(temp_path))
+
+            # Converter MP3 para WAV (o app espera WAV)
+            import soundfile as sf
+            import numpy as np
+            data, sr = sf.read(temp_path)
+            os.unlink(temp_path)  # Remove MP3
+
+            # Salvar como WAV
+            wav_path = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
+            sf.write(wav_path, data, sr)
+            return wav_path
+
+        except Exception as e:
+            logger.warning(f"Erro no Edge-TTS: {e}")
+            logger.info("Fallback para Kokoro nesta síntese...")
+            if self.kokoro_pipeline:
+                self.system = 'kokoro'
+                return self.synthesize(text)
+            return None
+
     def _synthesize_sentence(self, sentence: str) -> Optional[np.ndarray]:
         """Sintetiza uma frase com o sistema TTS atual."""
         if self.system == 'kokoro' and self.kokoro_pipeline:
             return self._kokoro_sentence(sentence)
+        elif self.system == 'edge':
+            return self._edge_sentence(sentence)
         elif self.qwen3_pipeline:
             return self._qwen3_sentence(sentence)
         return None
