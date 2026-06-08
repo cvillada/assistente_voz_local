@@ -234,6 +234,19 @@ Quando a Chica fala pelo alto-falante e o microfone capta o som dela mesma, pode
 2. O **VAD filter** do faster-whisper (`vad_filter=True`) ajuda a ignorar eco
 3. No Orange Pi 5, dá para usar o **P2 output** (fone de ouvido) + microfone USB para isolar
 
+## Config para o SBC
+
+```python
+# config.py — SBC (funciona sem alterações, STT_BACKEND='auto' já detecta)
+LLM_PROVIDER = 'llamacpp'          # llama.cpp server (porta 8080)
+LLM_MODEL = 'bonsai-4b-Q2_K.gguf' # ~570MB
+WHISPER_MODEL = 'turbo'           # faster-whisper gerencia em int8
+STT_BACKEND = 'auto'              # detecta hardware → escolhe faster-whisper
+TTS_SYSTEM = 'kokoro'            # local, leve
+AVATAR_ENABLE = True
+THINKING_ENABLED = False          # ganha velocidade
+```
+
 ## Pipeline de Instalação
 
 ```bash

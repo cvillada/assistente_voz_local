@@ -120,7 +120,7 @@ STOP_PHRASES = [
 # Configuração de voz TTS
 # Formato: 'voz1' ou 'voz1 X% mais voz2 Y%' (ex: 'pf_dora 80% mais if_sara 20%')
 TTS_VOICE = 'pf_dora'  # Vozes confirmadas: pf_dora (português), af_heart/af_bella/af_jessica (inglês)
-TTS_SPEED = 1.1                      # Velocidade da fala (1.0 = normal, <1.0 = mais lento, >1.0 = mais rápido)
+TTS_SPEED = 1.05                      # Velocidade da fala (1.0 = normal, <1.0 = mais lento, >1.0 = mais rápido)
 
 # Taxa de amostragem do TTS (Hz)
 TTS_SAMPLE_RATE = 24000              # Kokoro gera áudio a 24kHz
@@ -178,12 +178,16 @@ EDGE_TTS_SPEED = 1.0
 # CONFIGURAÇÕES DO PROVEDOR LLM
 # ============================================================================
 
-# Provedor de linguagem: 'ollama' (local, via Ollama) ou 'lm_studio' (local, via LM Studio API)
+# Provedor de linguagem: 'ollama', 'lm_studio' ou 'llamacpp'
+#   ollama   → via servidor Ollama local (porta 11434)
+#   lm_studio → via LM Studio local (porta 1234)
+#   llamacpp  → via llama-server local (porta 8080, servidor OpenAI-compatible)
 LLM_PROVIDER = 'lm_studio'
 
 # Modelo a ser usado (para Ollama: 'qwen3:1.7b', 'llama3.2:3b', etc.
-# Para LM Studio: nome do modelo carregado na interface, ex: 'llama-3.2-3b-instruct')
-LLM_MODEL = 'bonsai-4b'
+# Para LM Studio: nome do modelo carregado na interface, ex: 'llama-3.2-3b-instruct'
+# Para llama.cpp: nome usado no servidor, ex: 'qwen2.5-3b-instruct')
+LLM_MODEL = 'bonsai-8b'
 
 # ============================================================================
 # CONFIGURAÇÕES DO LM STUDIO (usado apenas quando LLM_PROVIDER = 'lm_studio')
@@ -191,6 +195,13 @@ LLM_MODEL = 'bonsai-4b'
 
 LM_STUDIO_HOST = 'localhost'         # Host do servidor LM Studio
 LM_STUDIO_PORT = 1234                # Porta do servidor LM Studio (padrão: 1234)
+
+# ============================================================================
+# CONFIGURAÇÕES DO LLAMA.CPP (usado apenas quando LLM_PROVIDER = 'llamacpp')
+# ============================================================================
+
+LLAMACPP_HOST = 'localhost'          # Host do llama-server (ex: 'localhost' ou IP do RPi)
+LLAMACPP_PORT = 8080                 # Porta do llama-server (padrão: 8080)
 
 # ============================================================================
 # CONFIGURAÇÕES GERAIS DO MODELO (aplicam-se a ambos os provedores)

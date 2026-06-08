@@ -236,14 +236,17 @@ class ChicaAssistant:
         print(Fore.CYAN + "-"*60)
         
         # Mostrar configurações do provedor LLM
-        provider_label = "Ollama" if LLM_PROVIDER == 'ollama' else "LM Studio"
+        if LLM_PROVIDER == 'ollama':
+            provider_label = "Ollama"
+        elif LLM_PROVIDER == 'llamacpp':
+            provider_label = f"llama.cpp ({config.LLAMACPP_HOST}:{config.LLAMACPP_PORT})"
+        else:
+            provider_label = f"LM Studio ({LM_STUDIO_HOST}:{LM_STUDIO_PORT})"
         print(Fore.CYAN + f"🤖 Configurações do provedor LLM:")
         print(Fore.CYAN + f"   • Provedor: {provider_label}")
         print(Fore.CYAN + f"   • Modelo: {LLM_MODEL}")
         print(Fore.CYAN + f"   • Temperatura: {LLM_TEMPERATURE}")
         print(Fore.CYAN + f"   • Máximo de tokens: {LLM_NUM_PREDICT}")
-        if LLM_PROVIDER == 'lm_studio':
-            print(Fore.CYAN + f"   • Host: {LM_STUDIO_HOST}:{LM_STUDIO_PORT}")
         print(Fore.CYAN + f"   • Thinking: {'✅ ativado' if THINKING_ENABLED else '❌ desativado'} (apenas Ollama)")
         print(Fore.CYAN + f"   • Para alterar, edite LLM_PROVIDER e LLM_MODEL no config.py")
         print(Fore.CYAN + "-"*60)
@@ -286,7 +289,7 @@ class ChicaAssistant:
         else:
             self._init_qwen3_tts()
 
-        # Inicializar cliente LLM (Ollama ou LM Studio)
+        # Inicializar cliente LLM (Ollama, LM Studio ou llama.cpp)
         print(Fore.CYAN + "🤖 Inicializando cliente LLM...")
         try:
             self.llm = LLMClient(
@@ -296,8 +299,15 @@ class ChicaAssistant:
                 max_tokens=LLM_NUM_PREDICT,
                 lm_studio_host=LM_STUDIO_HOST,
                 lm_studio_port=LM_STUDIO_PORT,
+                llamacpp_host=config.LLAMACPP_HOST,
+                llamacpp_port=config.LLAMACPP_PORT,
             )
-            provider_display = "Ollama" if LLM_PROVIDER == 'ollama' else f"LM Studio ({LM_STUDIO_HOST}:{LM_STUDIO_PORT})"
+            if LLM_PROVIDER == 'ollama':
+                provider_display = "Ollama"
+            elif LLM_PROVIDER == 'llamacpp':
+                provider_display = f"llama.cpp ({config.LLAMACPP_HOST}:{config.LLAMACPP_PORT})"
+            else:
+                provider_display = f"LM Studio ({LM_STUDIO_HOST}:{LM_STUDIO_PORT})"
             print(Fore.GREEN + f"✅ Cliente LLM inicializado: {provider_display} › {LLM_MODEL}")
         except LLMError as e:
             print(Fore.YELLOW + f"⚠️  Aviso ao inicializar LLM: {e}")

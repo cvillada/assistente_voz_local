@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Cliente LLM abstrato — suporta Ollama e LM Studio.
+Cliente LLM abstrato — suporta Ollama, LM Studio e llama.cpp.
 
 Uso:
     from llm_client import LLMClient
 
     client = LLMClient(provider='ollama', model='qwen3:1.7b')
+    # ou client = LLMClient(provider='lm_studio', model='llama-3.2-3b-instruct', lm_studio_port=1234)
+    # ou client = LLMClient(provider='llamacpp', model='qwen2.5-3b-instruct', llamacpp_port=8080)
     response = client.chat([{'role': 'user', 'content': 'Olá!'}])
     print(response.message.content)           # Texto da resposta
     print(response.message.thinking or '')    # Thinking (apenas Ollama)
@@ -55,13 +57,15 @@ class LLMClient:
     """Cliente unificado para Ollama e LM Studio.
 
     Args:
-        provider: 'ollama' ou 'lm_studio'
+        provider: 'ollama', 'lm_studio' ou 'llamacpp'
         model: Nome do modelo (ex: 'qwen3:1.7b' para Ollama,
-               'llama-3.2-3b-instruct' para LM Studio)
+               'llama-3.2-3b-instruct' para LM Studio/llama.cpp)
         temperature: Criatividade (0.0 - 1.0)
         max_tokens: Máximo de tokens na resposta
         lm_studio_host: Host do LM Studio (padrão: 'localhost')
         lm_studio_port: Porta do LM Studio (padrão: 1234)
+        llamacpp_host: Host do llama-server (padrão: 'localhost')
+        llamacpp_port: Porta do llama-server (padrão: 8080)
         request_timeout: Timeout em segundos para cada requisição
     """
 
@@ -73,6 +77,8 @@ class LLMClient:
         max_tokens: int = 300,
         lm_studio_host: str = 'localhost',
         lm_studio_port: int = 1234,
+        llamacpp_host: str = 'localhost',
+        llamacpp_port: int = 8080,
         request_timeout: int = 60,
     ) -> None:
         self.provider = provider.lower()
@@ -80,12 +86,13 @@ class LLMClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.lm_studio_base = f"http://{lm_studio_host}:{lm_studio_port}"
+        self.llamacpp_base = f"http://{llamacpp_host}:{llamacpp_port}"
         self.request_timeout = request_timeout
         self._backend = None
 
-        if self.provider not in ('ollama', 'lm_studio'):
+        if self.provider not in ('ollama', 'lm_studio', 'llamacpp'):
             raise LLMError(
-                f"Provedor desconhecido: '{provider}'. Use 'ollama' ou 'lm_studio'."
+                f"Provedor desconhecido: '{provider}'. Use 'ollama', 'lm_studio' ou 'llamacpp'."
             )
 
     # ------------------------------------------------------------------
@@ -99,8 +106,10 @@ class LLMClient:
 
         if self.provider == 'ollama':
             self._init_ollama()
-        else:
+        elif self.provider == 'lm_studio':
             self._init_lm_studio()
+        else:
+            self._init_llamacpp()
 
     def _init_ollama(self) -> None:
         try:
@@ -139,6 +148,33 @@ class LLMClient:
                     "Instale com: pip install openai"
                 )
 
+    def _init_llamacpp(self) -> None:
+        """Inicializa backend para llama.cpp (mesma API OpenAI-compatible)."""
+        try:
+            from openai import OpenAI
+            self._backend = OpenAI(
+                base_url=f"{self.llamacpp_base}/v1",
+                api_key="not-needed",  # llama.cpp não requer API key
+                timeout=self.request_timeout,
+            )
+            self._backend._is_openai = True
+            logger.info(
+                "Backend llama.cpp inicializado via openai library"
+            )
+        except ImportError:
+            try:
+                import requests as req
+                self._backend = req
+                self._backend._is_openai = False
+                logger.info(
+                    "Backend llama.cpp inicializado via requests (fallback)"
+                )
+            except ImportError:
+                raise LLMError(
+                    "Pacote 'openai' ou 'requests' necessário para llama.cpp. "
+                    "Instale com: pip install openai"
+                )
+
     # ------------------------------------------------------------------
     # Chat
     # ------------------------------------------------------------------
@@ -150,6 +186,7 @@ class LLMClient:
         if self.provider == 'ollama':
             return self._chat_ollama(messages)
         else:
+            # LM Studio e llama.cpp usam a mesma API OpenAI-compatible
             return self._chat_lm_studio(messages)
 
     def _chat_ollama(self, messages: list[dict]) -> LLMResponse:
@@ -196,8 +233,9 @@ class LLMClient:
 
     def _chat_lm_studio_requests(self, messages: list[dict]) -> LLMResponse:
         try:
+            base_url = self.llamacpp_base if self.provider == 'llamacpp' else self.lm_studio_base
             resp = self._backend.post(
-                f"{self.lm_studio_base}/v1/chat/completions",
+                f"{base_url}/v1/chat/completions",
                 json={
                     'model': self.model,
                     'messages': messages,
@@ -220,7 +258,7 @@ class LLMClient:
     # ------------------------------------------------------------------
 
     def chat_stream(self, messages: list[dict]):
-        """Versão streaming (apenas Ollama por enquanto)."""
+        """Versão streaming (apenas Ollama, LM Studio e llama.cpp via openai library)."""
         self._ensure_backend()
 
         if self.provider == 'ollama':
@@ -234,7 +272,7 @@ class LLMClient:
                 },
             )
         else:
-            # LM Studio via OpenAI library também suporta streaming
+            # LM Studio e llama.cpp via OpenAI library suportam streaming
             if getattr(self._backend, '_is_openai', False):
                 stream = self._backend.chat.completions.create(
                     model=self.model,
@@ -244,7 +282,7 @@ class LLMClient:
                     stream=True,
                 )
                 return stream
-            raise LLMError("LM Studio via requests não suporta streaming")
+            raise LLMError("LM Studio/llama.cpp via requests não suporta streaming")
 
     # ------------------------------------------------------------------
     # Verificação de disponibilidade
@@ -257,6 +295,7 @@ class LLMClient:
         if self.provider == 'ollama':
             return self._is_ollama_available()
         else:
+            # LM Studio e llama.cpp usam o mesmo endpoint /v1/models
             return self._is_lm_studio_available()
 
     def _is_ollama_available(self) -> bool:
@@ -275,8 +314,9 @@ class LLMClient:
                 return False
         else:
             try:
+                base_url = self.llamacpp_base if self.provider == 'llamacpp' else self.lm_studio_base
                 resp = self._backend.get(
-                    f"{self.lm_studio_base}/v1/models",
+                    f"{base_url}/v1/models",
                     timeout=5,
                 )
                 return resp.status_code == 200

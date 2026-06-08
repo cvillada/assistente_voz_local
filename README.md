@@ -7,7 +7,7 @@ Assistente de voz local com avatar animado, usando modelos locais para NLP, sín
 - **🎤 Reconhecimento de Voz**: STT em tempo real com Whisper (modelo `turbo`).
   Usa **whisper original** (MPS/GPU) no Mac Apple Silicon e **faster-whisper** (CTranslate2, 4x mais rápido) em CPU/ARM.
   Detecção automática de hardware — não precisa configurar nada.
-- **🤖 LLM Local**: Suporte a **LM Studio** (padrão) ou **Ollama**
+- **🤖 LLM Local**: Suporte a **LM Studio** (padrão), **Ollama** ou **llama.cpp**
 - **🗣️ TTS Triplo**:
   - **Kokoro-TTS** (padrão) — Voz natural em português (pf_dora)
   - **Edge-TTS** — Síntese neural online (voz Thalita, pt-BR), com fallback automático para Kokoro se ficar offline
@@ -75,13 +75,23 @@ sudo apt-get install python3-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev
 2. Inicie: `ollama serve`
 3. Baixe um modelo: `ollama pull qwen3:1.7b`
 
+### Opção C — llama.cpp (recomendado para SBC/Raspberry Pi)
+1. Compile ou instale: https://github.com/ggml-org/llama.cpp
+2. Baixe um GGUF (ex: `qwen2.5-3b-instruct-q4_k_m.gguf`)
+3. Inicie o servidor:
+   ```bash
+   llama-server -m modelo.q4_k_m.gguf -c 4096 --port 8080
+   ```
+4. Instale: `pip install openai`
+5. No `config.py`: `LLM_PROVIDER = 'llamacpp'`
+
 ## 🎯 Configuração
 
 Todas as configurações estão centralizadas em `config.py`:
 
 ```python
 # Provedor LLM
-LLM_PROVIDER = 'lm_studio'        # 'lm_studio' ou 'ollama'
+LLM_PROVIDER = 'lm_studio'        # 'lm_studio', 'ollama' ou 'llamacpp'
 LLM_MODEL = 'bonsai-4b'
 LLM_TEMPERATURE = 0.7
 LLM_NUM_PREDICT = 300
@@ -142,6 +152,7 @@ Se o **Edge-TTS** ou **Qwen3-TTS** falharem, o sistema faz **fallback automátic
 ### 1. Inicie o provedor LLM:
 - **LM Studio**: App aberto com API habilitada
 - **Ollama**: `ollama serve`
+- **llama.cpp**: `llama-server -m modelo.gguf -c 4096 --port 8080`
 
 ### 2. Execute a assistente:
 ```bash
@@ -198,8 +209,8 @@ A Chica lembra de informações importantes entre conversas:
 ```
 kokoro/
 ├── app.py              (~1760 linhas)  — Entry point principal
-├── config.py           (~ 305 linhas)  — Configurações centralizadas
-├── llm_client.py       (~ 284 linhas)  — Cliente Ollama / LM Studio
+├── config.py           (~ 322 linhas)  — Configurações centralizadas
+├── llm_client.py       (~ 324 linhas)  — Cliente Ollama / LM Studio / llama.cpp
 ├── tts_engine.py       (~ 317 linhas)  — Síntese de voz (Kokoro / Edge / Qwen3)
 ├── audio_detector.py   (~ 344 linhas)  — Captura e detecção de voz (Whisper)
 ├── commands.py         (~ 240 linhas)  — Comandos locais + detecção de intenção
@@ -221,7 +232,7 @@ kokoro/
 |--------|--------|
 | `app.py` | Orquestrador principal: áudio → STT → LLM → TTS → avatar |
 | `config.py` | Todas as configurações centralizadas |
-| `llm_client.py` | Interface com Ollama e LM Studio |
+|| `llm_client.py` | Interface com Ollama, LM Studio e llama.cpp |
 | `tts_engine.py` | Síntese de voz (Kokoro, Edge-TTS, Qwen3) com fallback |
 | `audio_detector.py` | Captura de áudio, detecção de fala, wake word, STT (Whisper) |
 | `commands.py` | Execução de comandos locais com detecção inteligente de intenção |
@@ -249,7 +260,7 @@ kokoro/
    - Pesquisa web? → `search_web()` → injeta resultados no contexto
    - Info sistema? → `system_info.py` → injeta dados no contexto
    - Conversa geral? → Envia direto para o LLM
-4. **LLM** (LM Studio / Ollama) gera resposta
+4. **LLM** (LM Studio / Ollama / llama.cpp) gera resposta
 5. **TTS** converte resposta em áudio
 6. **Avatar** anima sincronizado com o áudio
 
