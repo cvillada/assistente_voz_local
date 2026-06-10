@@ -1,5 +1,4 @@
 from faster_whisper import WhisperModel
-import whisper
 import torch
 from kokoro import KPipeline
 import soundfile as sf
@@ -392,7 +391,8 @@ class ChicaAssistant:
         print(Fore.CYAN + f"🎤 STT: {backend} ({config.WHISPER_MODEL})")
 
         if backend == 'whisper':
-            # Whisper original com PyTorch — usa MPS no Mac
+            # Whisper original com PyTorch — import sob demanda (só macOS)
+            import whisper
             device = "mps" if has_mps else "cpu"
             try:
                 self.stt_model = whisper.load_model(config.WHISPER_MODEL, device=device)
