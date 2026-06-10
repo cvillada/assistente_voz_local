@@ -111,11 +111,11 @@ TTS_SYSTEM = 'kokoro'             # 'kokoro', 'edge' ou 'qwen3'
 TTS_VOICE = 'pf_dora'             # Kokoro: pf_dora (pt-BR)
 EDGE_TTS_VOICE = 'pt-BR-ThalitaMultilingualNeural'  # Edge-TTS
 
-# Sensibilidade do microfone
+# Sensibilidade do microfone (auto-detectado no macOS vs Linux/RPi)
 SPEECH_THRESHOLD = 0.005
 SILENCE_DURATION = 1.5
 INACTIVITY_TIMEOUT = 15.0
-AUDIO_DEVICE = "Isolamento de Voz"
+AUDIO_DEVICE = "Isolamento de Voz"  # Auto: macOS → Isolamento de Voz, Linux → Padrão
 
 # Speech-to-Text (Whisper / faster-whisper)
 WHISPER_MODEL = 'turbo'            # 'tiny', 'base', 'small', 'medium', 'large', 'turbo'
@@ -128,12 +128,16 @@ MEMORY_CHAR_LIMIT = 2200
 MEMORY_USER_CHAR_LIMIT = 1375
 ```
 
-### Áudio: Isolamento de Voz (macOS)
+### Áudio: Detecção Automática de Plataforma
 
-No MacBook, você pode configurar `AUDIO_DEVICE` em `config.py`:
-- `"Padrão"` — Dispositivo padrão do sistema
-- `"Isolamento de Voz"` — Filtra ruído de fundo (recomendado)
-- Nome específico — Ex: `"MacBook Pro Microfone"`
+O dispositivo de áudio é selecionado automaticamente:
+
+| Plataforma | `AUDIO_DEVICE` | Comportamento |
+|---|---|---|
+| **macOS** | `"Isolamento de Voz"` | Usa o filtro de ruído interno do macOS (Voice Isolation) |
+| **Linux / Raspberry Pi** | `"Padrão"` | Usa o dispositivo padrão do sistema (ALSA/PulseAudio) |
+
+Você pode sobrescrever manualmente em `config.py` com um nome específico (ex: `"USB Microphone"`).
 
 ### TTS: Fallback Automático
 
@@ -280,9 +284,19 @@ kokoro/
 ## 🍓 Raspberry Pi / Orange Pi (SBC)
 
 Recomendações para rodar em SBCs ARM:
+
+### Instalação de áudio (uma vez)
+```bash
+sudo apt install pulseaudio pulseaudio-module-bluetooth libportaudio2 sox
+pulseaudio --start
+```
+
+### Configuração
 - O **faster-whisper** é selecionado automaticamente (MPS não disponível) — 4x mais rápido que whisper original em CPU
-- Use Whisper `tiny` se a RAM for limitada: `WHISPER_MODEL = 'tiny'`
-- No Orange Pi 5, considere `WHISPER_MODEL = 'turbo'` (CTranslate2 é otimizado para ARM64)
+- O **dispositivo de áudio** é `"Padrão"` automaticamente (funciona com fone Bluetooth, USB, P2)
+- Use Whisper `tiny` ou `base` se a RAM for limitada: `WHISPER_MODEL = 'base'`
+- No **RPi 4 (4GB)**: recomendo `WHISPER_MODEL = 'base'` (turbo pesa muito)
+- No **RPi 5 / Orange Pi 5**: `WHISPER_MODEL = 'turbo'` roda bem com CTranslate2
 
 ## 🛠️ Comandos Suportados (Sistema)
 

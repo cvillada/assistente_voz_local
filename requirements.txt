@@ -1,56 +1,71 @@
-# Requirements para o Assistente de Voz Chica com Avatar (app4.py)
+# Requirements para o Assistente de Voz Chica
+# Python 3.8+ (testado com Python 3.12.4)
 # Instale com: pip install -r requirements.txt
 
-# Modelos de IA
-ollama>=0.3.0              # Para LLM local (Ollama)
-faster-whisper>=1.0.0          # Para reconhecimento de voz (STT) — 4x mais rápido que whisper original
-kokoro>=0.1.0              # Para síntese de voz (TTS)
-qwen3-tts>=0.1.0           # Para síntese de voz (TTS) com Qwen3
+# ============================================================================
+# RECONHECIMENTO DE VOZ (STT)
+# ============================================================================
+faster-whisper>=1.0.0          # STT via CTranslate2 — 4x mais rápido que whisper original
+                                # No Mac usa whisper original (GPU/MPS), no SBC usa este (CPU int8)
 
-# Frameworks de deep learning
-torch>=2.0.0               # PyTorch (necessário para Whisper e Kokoro)
-sox>=1.4.1                 # Para processamento de áudio
+# ============================================================================
+# SÍNTESE DE VOZ (TTS)
+# ============================================================================
+kokoro>=0.1.0                  # TTS local (padrão) — português (pf_dora), inglês, etc.
+edge-tts>=6.0.0                # TTS online via Microsoft Edge — voz Thalita (pt-BR)
+# qwen3-tts>=0.1.0             # TTS Qwen3 (opcional — instale se for usar)
 
-# Cliente LLM (Ollama / LM Studio)
-ollama>=0.3.0              # Para LLM local via Ollama
-openai>=1.0.0              # Para LLM local via LM Studio (API compatível com OpenAI)
+# ============================================================================
+# CLIENTE LLM (Ollama / LM Studio / llama.cpp)
+# ============================================================================
+ollama>=0.3.0                  # Para LLM local via Ollama
+openai>=1.0.0                  # Para LM Studio / llama.cpp (API compatível com OpenAI)
+requests>=2.31.0               # Fallback para LLM + web_search
 
-# Processamento de áudio
-soundfile>=0.12.0          # Para leitura/escrita de arquivos de áudio
-sounddevice>=0.4.6         # Para captura e reprodução de áudio em tempo real
-numpy>=2.0.0               # Para processamento numérico de áudio
+# ============================================================================
+# PROCESSAMENTO DE ÁUDIO
+# ============================================================================
+soundfile>=0.12.0              # Leitura/escrita de arquivos de áudio (.wav)
+sounddevice>=0.4.6             # Captura e reprodução de áudio em tempo real
+numpy>=1.24.0,<2.0             # Processamento numérico (compatível com ML libs)
 
-# Interface gráfica (Avatar)
-pygame>=2.6.0              # Para exibição do avatar animado
+# ============================================================================
+# INTERFACE GRÁFICA (AVATAR)
+# ============================================================================
+pygame>=2.5.0                  # Avatar animado (opcional — desabilite com AVATAR_ENABLE=False)
 
-# Utilitários
-colorama>=0.4.6            # Para cores no terminal
-tqdm>=4.66.0               # Para barras de progresso (usado pelo Whisper)
+# ============================================================================
+# FRAMEWORKS DE DEEP LEARNING
+# ============================================================================
+torch>=2.2.0                   # PyTorch — necessário para Kokoro e whisper original
+                                # Python 3.12 requer torch>=2.2.0
 
-# Dependências opcionais/recomendadas
-# Para melhor performance com CUDA (se tiver GPU NVIDIA):
-# torch>=2.0.0 --index-url https://download.pytorch.org/whl/cu118
+# ============================================================================
+# UTILITÁRIOS
+# ============================================================================
+colorama>=0.4.6                # Cores no terminal
+tqdm>=4.66.0                   # Barras de progresso
 
-# Para melhor performance com Apple Silicon (M1/M2/M3):
-# torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
+# ============================================================================
+# NOTAS IMPORTANTES
+# ============================================================================
+# 1. OLLAMA: Deve ser instalado separadamente (https://ollama.ai/)
+# 2. LLAMA.CPP: Compile ou instale (https://github.com/ggml-org/llama.cpp)
+# 3. MODELOS: Baixados automaticamente na primeira execução
+# 4. GPU NVIDIA: pip install torch --index-url https://download.pytorch.org/whl/cu118
+# 5. APPLE SILICON (MPS): torch já vem com suporte MPS no macOS
+# 6. RPi / ARM: torch CPU é suficiente (faster-whisper usa CTranslate2, não torch)
 
-# Notas importantes:
-# 1. O Ollama deve ser instalado separadamente (veja https://ollama.ai/)
-# 2. O Whisper baixa automaticamente os modelos na primeira execução
-# 3. O Kokoro baixa automaticamente as vozes na primeira execução
-# 4. Para GPU NVIDIA, instale PyTorch com suporte CUDA
-# 5. Para Apple Silicon, use PyTorch otimizado para MPS
-# 6. O Pygame é necessário para a interface do avatar
-# 7. Certifique-se de ter as dependências do SDL2 instaladas para o Pygame
-
-# Instalação no macOS:
-# brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf portaudio
-# pip install -r requirements.txt
-
-# Instalação no Ubuntu/Debian:
-# sudo apt-get install python3-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev portaudio19-dev
-# pip install -r requirements.txt
-
-# Instalação no Windows:
-# Baixe os instaladores do Pygame e SDL2 do site oficial
-# pip install -r requirements.txt
+# ============================================================================
+# DEPENDÊNCIAS DE SISTEMA (instalar antes do pip)
+# ============================================================================
+# macOS:
+#   brew install sdl2 sdl2_image sdl2_mixer sdl2_ttf portaudio sox
+#
+# Ubuntu/Debian (incluindo Raspberry Pi OS):
+#   sudo apt install python3-dev libsdl2-dev libsdl2-image-dev \
+#     libsdl2-mixer-dev libsdl2-ttf-dev portaudio19-dev sox \
+#     pulseaudio pulseaudio-module-bluetooth
+#
+# Windows (para Pygame):
+#   Baixe do site oficial do Pygame ou use: pip install pygame
