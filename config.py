@@ -59,14 +59,21 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 CHUNK = 1024
 
-# Configurações de dispositivo de áudio (MacBook)
+# Detecção automática de plataforma para dispositivo de áudio
 # ----------------------------------------------------------------------------
-# No MacBook, você pode escolher entre:
-# - "Padrão" (default): Usa o dispositivo padrão do sistema
-# - "Isolamento de Voz" (voice_isolation): Filtra ruído de fundo
-# - Especificar um dispositivo manualmente (ex: "MacBook Pro Microfone")
+# No macOS: usa "Isolamento de Voz" (filtro de ruído interno)
+# No Linux/RPi: usa "Padrão" (dispositivo padrão do sistema)
 # ----------------------------------------------------------------------------
-AUDIO_DEVICE = "Isolamento de Voz"  # Opções: "Padrão", "Isolamento de Voz", ou nome específico
+import platform as _platform
+if _platform.system() == 'Darwin':
+    _AUDIO_DEVICE = "Isolamento de Voz"
+else:
+    _AUDIO_DEVICE = "Padrão"
+
+# Dispositivo de áudio — usado pelo sounddevice para captura de microfone
+# Opções: "Padrão", "Isolamento de Voz" (só macOS), ou nome específico
+AUDIO_DEVICE = _AUDIO_DEVICE
+del _AUDIO_DEVICE, _platform
 
 # Configurações de sensibilidade de voz
 # ----------------------------------------------------------------------------
